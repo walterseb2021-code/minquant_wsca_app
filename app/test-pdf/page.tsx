@@ -2,8 +2,13 @@
 "use client";
 
 import React, { useState } from "react";
-// Importa desde lib/pdf.ts con ruta relativa (app/ y lib/ son carpetas hermanas)
-import { buildMineralPdf, buildGeneralReportPdf, downloadPdf, type CurrencyCode } from "../../lib/pdf";
+// Importa desde lib/pdf.ts con el nombre correcto: buildReportPdf
+import {
+  buildMineralPdf,
+  buildReportPdf,
+  downloadPdf,
+  type CurrencyCode,
+} from "../../lib/pdf";
 
 export default function TestPdfPage() {
   const [busyOne, setBusyOne] = useState(false);
@@ -40,7 +45,7 @@ export default function TestPdfPage() {
   async function handleGeneralPdf() {
     try {
       setBusyGeneral(true);
-      const bytes = await buildGeneralReportPdf({
+      const bytes = await buildReportPdf({
         title: "Reporte General de Minerales (DEMO)",
         currency,
         rows,
