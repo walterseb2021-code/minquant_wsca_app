@@ -1,4 +1,3 @@
-// @ts-nocheck
 // lib/pdf.ts — PDFs para MinQuant_WSCA (portada + mapa OSM + tablas + ficha técnica dinámica)
 import jsPDF from "jspdf";
 import autoTable, { RowInput } from "jspdf-autotable";
