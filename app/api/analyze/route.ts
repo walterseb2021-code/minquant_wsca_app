@@ -23,6 +23,9 @@ const STATIC_FALLBACKS = [
   "gemini-pro-latest",
 ];
 
+const MAX_RETRIES = 3;
+const INITIAL_DELAY_MS = 800;
+
 // ---------- utils básicos
 const toBase64 = (f: File) => f.arrayBuffer().then(ab => Buffer.from(ab).toString("base64"));
 const cleanName = (raw: string) =>
@@ -31,6 +34,8 @@ const cleanName = (raw: string) =>
     .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9 \-()/]/g, "")
     .replace(/\s+/g, " ")
     .replace(/^./, c => c.toUpperCase());
+
+function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
 function mergeDuplicates(arr: MineralResult[]): MineralResult[] {
   const map = new Map<string, MineralResult>();
@@ -130,7 +135,7 @@ function extractJson(text: string): any {
   }
   try { return JSON.parse(t); } catch {}
 
-  // Si vino "An error occurred: ..." u otro mensaje, no romper
+  // Si vino { "results": [...] } dentro de texto
   const arrMatch = t.match(/\{[\s\S]*"results"\s*:\s*(\[[\s\S]*?\])[\s\S]*\}/);
   if (arrMatch) {
     try { return { results: JSON.parse(arrMatch[1]) }; } catch {}
@@ -148,10 +153,12 @@ async function listModelsForKey(apiKey: string): Promise<string[]> {
     return names.map(n => n.replace(/^models\//, ""));
   } catch { return []; }
 }
+
 async function getFirstWorkingModel(ai: GoogleGenerativeAI, apiKey: string) {
   const fromApi = await listModelsForKey(apiKey);
   const candidates = [...new Set([...fromApi, ...STATIC_FALLBACKS])];
   const errors: string[] = [];
+
   for (const name of candidates) {
     try {
       const model = ai.getGenerativeModel({
@@ -163,25 +170,96 @@ async function getFirstWorkingModel(ai: GoogleGenerativeAI, apiKey: string) {
           responseMimeType: "application/json",
         } as any,
       });
-      await model.generateContent({ contents: [{ role: "user", parts: [{ text: "ok" }] }] });
+
+      // “ping” liviano con retry: evita quedarnos con un modelo saturado
+      await genWithRetry(model, [{ role: "user", parts: [{ text: "ok" }] }]);
       return model;
     } catch (e: any) {
       errors.push(`${name}: ${e?.message || e}`);
+      continue;
     }
   }
   throw new Error("Ningún modelo respondió. Intentados → " + errors.join(" | "));
 }
 
-// ---------- Handler
+// ---------- generateContent con reintentos/backoff para 429/503
+async function genWithRetry(
+  model: ReturnType<GoogleGenerativeAI["getGenerativeModel"]>,
+  contents: any
+) {
+  let delay = INITIAL_DELAY_MS;
+  for (let i = 0; i <= MAX_RETRIES; i++) {
+    try {
+      // SDK v1 acepta objeto contents o array de messages; mantenemos compatibilidad
+      const res = await (model as any).generateContent({ contents });
+      return res;
+    } catch (e: any) {
+      const msg = String(e?.message || e);
+      const maybeOverload = /(?:503|overloaded|quota|rate|429)/i.test(msg);
+      if (i < MAX_RETRIES && maybeOverload) {
+        await sleep(delay);
+        delay *= 1.6; // backoff
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error("Sin respuesta tras reintentos.");
+}
+
+/* ===========================  MODO OFFLINE  =========================== */
+/** Para pruebas sin Gemini. Activa con:
+ *   - .env.local → ANALYZE_OFFLINE=1
+ *   - o llamando /api/analyze?offline=1
+ */
+function offlineAnalyze(files: File[]) {
+  // minerales “demo” frecuentes
+  const demoSets: string[][] = [
+    ["Malaquita", "Azurita", "Limonita"],
+    ["Cuarzo", "Calcita", "Hematita"],
+    ["Pirita", "Cuarzo", "Goethita"],
+  ];
+  const perImage = files.map((f, idx) => {
+    const set = demoSets[idx % demoSets.length];
+    // reparto simple 50/30/20 con pequeñas variaciones
+    const base = [50, 30, 20];
+    const jitter = base.map(v => v + (Math.random() * 6 - 3));
+    const sum = jitter.reduce((a, b) => a + b, 0);
+    const norm = jitter.map(v => +(v / sum * 100).toFixed(2));
+
+    const results: MineralResult[] = set.map((n, i) => ({
+      name: n,
+      pct: norm[i],
+      confidence: 0.9 - i * 0.15,
+      evidence: "offline",
+    }));
+    return { fileName: f.name || `foto-${idx + 1}.jpg`, results: normalizeTo100(results) };
+  });
+
+  const global = computeGlobal(perImage);
+  return { perImage, global, offline: true };
+}
+
+/* ===========================   HANDLER    =========================== */
 export async function POST(req: Request) {
   try {
+    // ¿modo offline?
+    const url = new URL(req.url);
+    const offlineFlag = url.searchParams.get("offline") === "1" || process.env.ANALYZE_OFFLINE === "1";
+
+    const form = await req.formData();
+    const files = form.getAll("images") as File[];
+    if (!files.length) return Response.json({ error: "Sin imágenes" }, { status: 400 });
+
+    if (offlineFlag) {
+      const out = offlineAnalyze(files);
+      return Response.json(out, { status: 200 });
+    }
+
     const apiKey = process.env.GEMINI_API_KEY?.trim();
     if (!apiKey) {
       return Response.json({ error: "Falta GEMINI_API_KEY" }, { status: 400 });
     }
-    const form = await req.formData();
-    const files = form.getAll("images") as File[];
-    if (!files.length) return Response.json({ error: "Sin imágenes" }, { status: 400 });
 
     const ai = new GoogleGenerativeAI(apiKey);
     const model = await getFirstWorkingModel(ai, apiKey);
@@ -201,15 +279,15 @@ export async function POST(req: Request) {
         `4) Sé conservador con "confidence".\n` +
         `5) Sin texto fuera del JSON.`;
 
-      const res = await model.generateContent([
-        { inlineData: { mimeType: mime, data: b64 } },
-        { text: prompt },
-      ]);
+      const res = await genWithRetry(
+        model,
+        [{ role: "user", parts: [{ inlineData: { mimeType: mime, data: b64 } }, { text: prompt }] }]
+      );
 
       let results: MineralResult[] = [];
       try {
-        const raw = res?.response?.text?.() ?? "";
-        const parsed = extractJson(raw) ?? {};
+        const rawText = res?.response?.text?.() ?? "";
+        const parsed = extractJson(rawText) ?? {};
         const arr = Array.isArray((parsed as any).results) ? (parsed as any).results : [];
         results = (arr as MineralResult[]).filter(Boolean);
       } catch {
