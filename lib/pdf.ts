@@ -47,6 +47,97 @@ function normalizeTo100(results: MineralResult[]): MineralResult[] {
 function safeTxt(v: unknown): string {
   return v == null ? "" : String(v);
 }
+// --- Helpers para inferir COMMODITY dinámicamente ---
+function _norm(s: string) {
+  return (s || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+// Normaliza el nombre de commodity a etiquetas estándar
+function normalizeCommodityName(raw?: string | null): string | null {
+  if (!raw) return null;
+  const s = _norm(raw);
+  // Palabras clave frecuentes en 'commodity' de la ficha
+  if (/\b(oro|gold)\b/.test(s)) return "Oro";
+  if (/\b(plata|silver)\b/.test(s)) return "Plata";
+  if (/\b(cobre|copper|cupr(o|ic)|cu)\b/.test(s)) return "Cobre";
+  if (/\b(zinc|zinco|zn)\b/.test(s)) return "Zinc";
+  if (/\b(alumin(io|ium)|bauxita|al)\b/.test(s)) return "Aluminio";
+  if (/\b(plomo|lead|pb)\b/.test(s)) return "Plomo";
+  if (/\b(esta(n|ñ)o|tin|sn|casiterita)\b/.test(s)) return "Estaño";
+  if (/\b(niquel|nickel|ni|pentlandita)\b/.test(s)) return "Níquel";
+  if (/\b(litio|lithium|li|espodumena|spodumene)\b/.test(s)) return "Litio";
+  if (/\b(platino|platinum|pt)\b/.test(s)) return "Platino";
+  if (/\b(paladio|palladium|pd)\b/.test(s)) return "Paladio";
+  if (/\b(hierro|iron|fe|hematita|magnetita|goethita|limonita)\b/.test(s)) return "Hierro";
+  if (/\b(cobalto|cobalt|co)\b/.test(s)) return "Cobalto";
+  if (/\b(molibden(o|um)|molybdenum|mo)\b/.test(s)) return "Molibdeno";
+  if (/\b(tungsten(o|um)|wolframio|w|scheelita)\b/.test(s)) return "Wolframio";
+  if (/\b(uranio|uranium|u)\b/.test(s)) return "Uranio";
+  return null;
+}
+
+// Respaldo por mineral si la ficha no tuviera 'commodity'
+const FALLBACK_MINERAL_TO_COMMODITY: Record<string, string> = {
+  Malaquita: "Cobre",
+  Malachite: "Cobre",
+  Azurita: "Cobre",
+  Azurite: "Cobre",
+  Cuprita: "Cobre",
+  Chalcocita: "Cobre",
+  Bornita: "Cobre",
+  Esfalerita: "Zinc",
+  Sphalerite: "Zinc",
+  Galena: "Plomo",
+  Casiterita: "Estaño",
+  Pentlandita: "Níquel",
+  Bauxita: "Aluminio",
+  Hematita: "Hierro",
+  Magnetita: "Hierro",
+  Goethita: "Hierro",
+  Limonita: "Hierro",
+  Oro: "Oro",
+  Gold: "Oro",
+  Plata: "Plata",
+  Silver: "Plata",
+};
+
+// Consulta dinámica a tu ficha para obtener el commodity y normalizarlo
+async function mineralToCommodity(mineralName: string): Promise<string | null> {
+  try {
+    const info = await getMineralInfo(mineralName);
+    const fromInfo = normalizeCommodityName(info?.commodity || info?.nombre || mineralName);
+    if (fromInfo) return fromInfo;
+  } catch {}
+  // Fallback por mineral
+  const fb = FALLBACK_MINERAL_TO_COMMODITY[mineralName] || FALLBACK_MINERAL_TO_COMMODITY[mineralName.trim()];
+  return fb || null;
+}
+
+// Suma % por commodity (llamando dinámicamente a la ficha)
+async function aggregateByCommodity(results: MineralResult[]) {
+  const map = new Map<string, number>();
+  // Resolver commodities en paralelo (minimiza latencia)
+  const uniq = Array.from(new Set(results.map(r => r.name)));
+  const resolved = await Promise.all(
+    uniq.map(async (n) => ({ n, c: await mineralToCommodity(n) }))
+  );
+  const nameToComm = new Map(resolved.map(x => [x.n, x.c]));
+
+  for (const r of results) {
+    const c = nameToComm.get(r.name);
+    if (!c) continue;
+    map.set(c, (map.get(c) || 0) + (r.pct || 0));
+  }
+  // Normaliza por redondeos
+  const tot = Array.from(map.values()).reduce((a, b) => a + b, 0) || 1;
+  return Array.from(map.entries())
+    .map(([mineral, pct]) => ({ mineral, gradePct: +(pct / tot * 100).toFixed(2) }))
+    .sort((a, b) => b.gradePct - a.gradePct);
+}
 
 function titleCase(s: string) {
   if (!s) return s;
@@ -332,81 +423,94 @@ export async function buildReportPdf(opts: BuildReportOptions) {
     }
   });
 
-  // ===== Página económica: Top 5 minerales comerciales =====
-  try {
-    const globalNorm = normalizeTo100(results).map((r) => ({ ...r, name: titleCase(r.name) }));
+  // ===== Página económica: Top 5 por commodity (dinámico) =====
+try {
+  const globalNorm = normalizeTo100(results).map(r => ({ ...r, name: r.name.trim() }));
 
-    // 1) Precios dinámicos (o respaldo)
-    const market = await getCommodityPrices(); // { prices: {...}, currency: 'USD' }
-    let econRows = pickTopCommercial(globalNorm, market.prices);
-    econRows = estimateCommodityValue(econRows);
+  // 1) Agregar resultados por commodity, usando la ficha dinámica
+  const commodityArr = await aggregateByCommodity(globalNorm);
 
-    if (econRows.length > 0) {
-      doc.addPage();
-      let yE = 56;
+  // 2) Precios (dinámicos, con fallback interno)
+  const market = await getCommodityPrices(); // { prices, currency, updatedAt? }
 
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(TITLE_COLOR);
-      doc.setFontSize(16);
-      doc.text("Minerales comerciales y análisis económico", marginX, yE);
-      yE += 14;
+  // 3) Mantener solo commodities con precio disponible y limitar a 5
+  const econRows = commodityArr
+    .filter(r => market.prices[r.mineral] != null && r.gradePct > 0)
+    .slice(0, 5)
+    .map(r => ({
+      mineral: r.mineral,
+      gradePct: r.gradePct,
+      price: market.prices[r.mineral],
+      estValue: +(((r.gradePct / 100) * (market.prices[r.mineral] || 0)).toFixed(2)),
+    }));
 
-      doc.setFont("helvetica", "normal");
-      doc.setTextColor("#374151");
-      doc.setFontSize(10);
-      const srcNote = market.updatedAt
-        ? `Fuente de precios: /api/commodity-prices (actualizado: ${new Date(market.updatedAt).toLocaleString()})`
-        : "Precios referenciales internos. Si deseas, configura /api/commodity-prices para actualización automática.";
-      doc.text(
-        `${srcNote} — Cálculo aproximado del valor estimado por tonelada de mineral.`,
-        marginX,
-        yE
-      );
-      yE += 8;
+  if (econRows.length > 0) {
+    doc.addPage();
+    let yE = 56;
 
-      const econBody = econRows.map((r) => [
-        r.mineral,
-        r.gradePct.toFixed(2),
-        fmtMoney(r.price, market.currency),
-        fmtMoney(r.estValue, market.currency),
-      ]) as any[];
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(TITLE_COLOR);
+    doc.setFontSize(16);
+    doc.text("Minerales comerciales y análisis económico", marginX, yE);
+    yE += 14;
 
-      autoTable(doc, {
-        startY: yE + 6,
-        margin: { left: marginX, right: marginX },
-        head: [["Mineral", "Ley (%)", `Precio (${market.currency}/t metal)`, `Valor estimado (${market.currency}/t mineral)`]],
-        body: econBody,
-        headStyles: { fillColor: LIGHT as any, textColor: DARK as any, halign: "left" as any },
-        styles: { fontSize: 11, cellPadding: 6 },
-      });
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor("#374151");
+    doc.setFontSize(10);
+    const srcNote = market.updatedAt
+      ? `Fuente precios: /api/commodity-prices (actualizado: ${new Date(market.updatedAt).toLocaleString()})`
+      : "Precios referenciales internos (fallback).";
+    doc.text(`${srcNote} — Valor estimado = Precio × (Ley/100).`, marginX, yE);
+    yE += 8;
 
-      yE = ((doc as any).lastAutoTable?.finalY || yE) + 14;
+    const econBody = econRows.map(r => [
+      r.mineral,
+      r.gradePct.toFixed(2),
+      fmtMoney(r.price, market.currency),
+      fmtMoney(r.estValue, market.currency),
+    ]);
 
-      const totalUSDPerTonne = Math.round(econRows.reduce((a, r) => a + (r.estValue || 0), 0) * 100) / 100;
+    autoTable(doc, {
+      startY: yE + 6,
+      margin: { left: marginX, right: marginX },
+      head: [["Commodity", "Ley (%)", `Precio (${market.currency}/t metal)`, `Valor estimado (${market.currency}/t mineral)`]],
+      body: econBody,
+      headStyles: { fillColor: LIGHT as any, textColor: DARK as any, halign: "left" as any },
+      styles: { fontSize: 11, cellPadding: 6 },
+    });
 
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(ACCENT);
-      doc.setFontSize(12);
-      doc.text(`Total estimado (${market.currency}/t): ${fmtMoney(totalUSDPerTonne, market.currency)}`, marginX, yE);
-      yE += 16;
+    yE = ((doc as any).lastAutoTable?.finalY || yE) + 14;
 
-      const rec = autoRecommendation(totalUSDPerTonne);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(DARK);
-      doc.setFontSize(12);
-      doc.text(`Viabilidad: ${rec.nivel}`, marginX, yE);
-      yE += 14;
+    const totalUSDPerTonne = econRows.reduce((a, r) => a + (r.estValue || 0), 0);
 
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(10);
-      doc.text(`Conclusión y recomendaciones: ${rec.texto}`, marginX, yE, { maxWidth: pageW - marginX * 2 });
-    }
-  } catch {
-    // no rompemos el PDF si falla esta sección
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(ACCENT);
+    doc.setFontSize(12);
+    doc.text(`Total estimado (${market.currency}/t): ${fmtMoney(totalUSDPerTonne, market.currency)}`, marginX, yE);
+    yE += 16;
+
+    const v = totalUSDPerTonne;
+    const nivel = v >= 100 ? "Alta" : v >= 30 ? "Media" : "Baja";
+    const texto =
+      nivel === "Alta"
+        ? "Recomendado avanzar a muestreo representativo, QA/QC y pruebas metalúrgicas."
+        : nivel === "Media"
+        ? "Continuar con exploración dirigida y validar recuperación metalúrgica."
+        : "No recomendable por ahora; priorizar prospección adicional y revisar costos.";
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(DARK);
+    doc.setFontSize(12);
+    doc.text(`Viabilidad: ${nivel}`, marginX, yE);
+    yE += 14;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text(`Conclusión y recomendaciones: ${texto}`, marginX, yE, { maxWidth: pageW - marginX * 2 });
   }
-
-  return doc;
+} catch {
+  /* no romper si falla */
 }
+
 
 /* =========================================================================
    PDF FICHA TÉCNICA POR MINERAL
