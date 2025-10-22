@@ -21,31 +21,35 @@ async function blobToDataURL(b: Blob): Promise<string> {
   });
 }
 
-// Proxy a nuestro endpoint de mapa estático OSM -> dataURL (PNG)
+// Proxy a nuestro endpoint de mapa estático OSM -> dataURL (PNG) con fallback local
 async function fetchStaticMapDataUrl(lat: number, lng: number, zoom = 14, size = "900x380") {
   const url = `/api/staticmap?lat=${lat}&lng=${lng}&zoom=${zoom}&size=${size}`;
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`staticmap ${res.status}`);
-  const blob = await res.blob();
-  return blobToDataURL(blob);
-}
 
-function normalizeTo100(results: MineralResult[]): MineralResult[] {
-  const sum = results.reduce((a, b) => a + (b.pct || 0), 0);
-  if (sum <= 0) return results.map((r) => ({ ...r, pct: 0 }));
-  const scaled = results.map((r) => ({ ...r, pct: (r.pct / sum) * 100 }));
-  const rounded = scaled.map((r) => ({ ...r, pct: Math.round(r.pct * 100) / 100 }));
-  let tot = +(rounded.reduce((a, b) => a + b.pct, 0).toFixed(2));
-  const diff = +(100 - tot).toFixed(2);
-  if (diff !== 0 && rounded.length) {
-    const iMax = rounded.reduce((idx, r, i, arr) => (r.pct > arr[idx].pct ? i : idx), 0);
-    rounded[iMax] = { ...rounded[iMax], pct: +(rounded[iMax].pct + diff).toFixed(2) };
+  // PNG de respaldo (1x1 px) para NO fallar nunca; el PDF lo escala
+  const FALLBACK_DATAURL =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==";
+
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) {
+      // si el proxy falla, devolvemos imagen de respaldo
+      return FALLBACK_DATAURL;
+    }
+    const blob = await res.blob();
+
+    // Convertir a dataURL sin lanzar error
+    return await new Promise<string>((resolve) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result));
+      fr.onerror = () => resolve(FALLBACK_DATAURL);
+      fr.readAsDataURL(blob);
+    });
+  } catch {
+    // Cualquier excepción -> devolvemos fallback para que el PDF NUNCA se rompa
+    return FALLBACK_DATAURL;
   }
-  return rounded;
 }
 
-function safeTxt(v: unknown): string {
-  return v == null ? "" : String(v);
 }
 // --- Helpers para inferir COMMODITY dinámicamente ---
 function _norm(s: string) {
