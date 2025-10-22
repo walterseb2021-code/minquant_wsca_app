@@ -1,89 +1,98 @@
 // app/api/staticmap/route.ts
 export const runtime = "nodejs";
 
-/** Parseo seguro de números con default */
 function num(v: string | null, d: number) {
   const n = Number(v);
   return Number.isFinite(n) ? n : d;
 }
 
-/** PNG 640x360 placeholder “Mapa no disponible” */
-const FALLBACK_PNG = Buffer.from(
-  // PNG gris clarito con texto; suficiente para que jsPDF lo inserte.
-  // (base64 generado; 640x360 px)
-  "iVBORw0KGgoAAAANSUhEUgAAAqAAAAB0CAYAAADm2t8jAAAACXBIWXMAAAsSAAALEgHS3X78AAABU0lEQVR4nO3RMQEAIAwEsYv9Z5gK0fYI5UQ3sCkEAAAAAAAAAAAAAAAAAAAAAAGC3GJb0n8sGf2mX8R8AAAAAAAAAABgNwYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABg7b3h2d5b5c4DAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGD9qg9F0b3h4wMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-  "base64"
-);
+type Provider = {
+  name: string;
+  makeUrl: (lat: number, lng: number, zoom: number, size: string) => string;
+};
 
-type Provider = (lat: number, lng: number, zoom: number, size: string) => string;
-
-/** Proveedor principal: OSM DE */
-const osmDe: Provider = (lat, lng, zoom, size) =>
-  `https://staticmap.openstreetmap.de/staticmap.php?center=${lat},${lng}&zoom=${zoom}&size=${encodeURIComponent(
-    size
-  )}&markers=${lat},${lng},lightblue1&maptype=mapnik`;
-
-/** Proveedor alterno: osmsurround.org */
-const osmSurround: Provider = (lat, lng, zoom, size) =>
-  `https://staticmap.osmsurround.org/staticmap.php?center=${lat},${lng}&zoom=${zoom}&size=${encodeURIComponent(
-    size
-  )}&markers=${lat},${lng},lightblue1`;
-
-const PROVIDERS: Provider[] = [osmDe, osmSurround];
-
-async function tryFetch(url: string) {
-  const r = await fetch(url, {
-    headers: {
-      "User-Agent": "MinQuant_WSCA/1.0 (+https://example.local)",
-      Accept: "image/png,image/*;q=0.8,*/*;q=0.5",
-    },
-    cache: "no-store",
-  });
-  if (!r.ok) {
-    const txt = await r.text().catch(() => "");
-    throw new Error(`Upstream ${r.status}: ${txt.slice(0, 280)}`);
-  }
-  const ab = await r.arrayBuffer();
-  return Buffer.from(ab);
-}
+// Lista de mirrors / servicios públicos sin API key.
+// Iremos probando en este orden hasta que uno responda 200 OK (image/png).
+const PROVIDERS: Provider[] = [
+  {
+    name: "osm-de",
+    makeUrl: (lat, lng, zoom, size) =>
+      `https://staticmap.openstreetmap.de/staticmap.php?center=${lat},${lng}&zoom=${zoom}&size=${encodeURIComponent(
+        size
+      )}&markers=${lat},${lng},lightblue1`,
+  },
+  {
+    name: "osm-fr",
+    makeUrl: (lat, lng, zoom, size) =>
+      `https://staticmap.openstreetmap.fr/staticmap.php?center=${lat},${lng}&zoom=${zoom}&size=${encodeURIComponent(
+        size
+      )}&markers=${lat},${lng},lightblue1`,
+  },
+  {
+    name: "osm-surround",
+    makeUrl: (lat, lng, zoom, size) =>
+      `https://staticmap.osmsurround.org/staticmap.php?center=${lat},${lng}&zoom=${zoom}&size=${encodeURIComponent(
+        size
+      )}&markers=${lat},${lng},lightblue1`,
+  },
+];
 
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const lat = num(searchParams.get("lat"), 0);
-    const lng = num(searchParams.get("lng"), 0);
+    const lat = num(searchParams.get("lat"), NaN);
+    const lng = num(searchParams.get("lng"), NaN);
     const zoom = Math.max(2, Math.min(20, num(searchParams.get("zoom"), 14)));
-    const size = searchParams.get("size") || "640x360";
+    const size = (searchParams.get("size") || "640x360").trim();
 
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      return new Response("Bad Request", { status: 400 });
+      return new Response("Bad Request: lat/lng inválidos", { status: 400 });
     }
 
-    // Intentar proveedores en cascada
-    let lastErr: unknown = null;
+    const headers = {
+      // Algunos mirrors bloquean peticiones sin UA
+      "User-Agent": "MinQuant_WSCA/1.0 (+https://minquant-wsca-app.vercel.app)",
+      // Evita cachear mientras depuramos
+      "Cache-Control": "no-store",
+    } as const;
+
+    const errors: string[] = [];
+
     for (const p of PROVIDERS) {
-      const url = p(lat, lng, zoom, size);
+      const url = p.makeUrl(lat, lng, zoom, size);
       try {
-        const png = await tryFetch(url);
-        return new Response(png, {
-          status: 200,
-          headers: { "Content-Type": "image/png", "Cache-Control": "no-store" },
-        });
-      } catch (e) {
-        lastErr = e;
+        const r = await fetch(url, { headers, cache: "no-store" });
+
+        // Aceptamos 200 con tipo imagen (png/jpg)
+        const okType =
+          r.ok &&
+          /^image\/(png|jpeg|jpg|webp)/i.test(r.headers.get("content-type") || "");
+
+        if (okType) {
+          const buf = await r.arrayBuffer();
+          return new Response(buf, {
+            status: 200,
+            headers: {
+              "Content-Type": r.headers.get("content-type") || "image/png",
+              "Cache-Control": "no-store",
+              "X-Staticmap-Provider": p.name,
+            },
+          });
+        } else {
+          const txt = await r.text().catch(() => "");
+          errors.push(`[${p.name}] ${r.status} ${txt.slice(0, 200)}`);
+        }
+      } catch (e: any) {
+        errors.push(`[${p.name}] fetch error: ${e?.message || e}`);
       }
     }
 
-    // Si todos fallan: devolvemos placeholder PNG
-    return new Response(FALLBACK_PNG, {
-      status: 200,
-      headers: { "Content-Type": "image/png", "Cache-Control": "no-store", "X-StaticMap-Note": String(lastErr || "") },
-    });
+    // Ningún provider respondió bien
+    return new Response(
+      `Staticmap upstreams unavailable:\n${errors.join("\n")}`,
+      { status: 502 }
+    );
   } catch (e: any) {
-    // Error inesperado: también devolvemos placeholder (para no romper el PDF)
-    return new Response(FALLBACK_PNG, {
-      status: 200,
-      headers: { "Content-Type": "image/png", "Cache-Control": "no-store", "X-StaticMap-Error": String(e?.message || e) },
-    });
+    return new Response(`Staticmap error: ${e?.message || e}`, { status: 500 });
   }
 }
