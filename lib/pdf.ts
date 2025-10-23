@@ -50,10 +50,8 @@ async function fetchStaticMapDataUrl(lat: number, lng: number, zoom = 14, size =
   }
 }
 
-}
 // --- Helpers para inferir COMMODITY dinámicamente ---
-function _norm(s: string) {
-  return (s || "")
+function _norm(s: string) {  return (s || "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
