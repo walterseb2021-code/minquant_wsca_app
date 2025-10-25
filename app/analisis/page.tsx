@@ -11,6 +11,7 @@ import {
   downloadPdf,
   type MineralResult,
   type CurrencyCode,
+  type CommodityAdjustments, // ← NUEVO
 } from "../../lib/pdf";
 
 /* Convierte File -> dataURL para insertar fotos en el PDF general */
@@ -40,7 +41,7 @@ type MineralInfoWeb = {
   fuentes?: { title: string; url: string }[];
 };
 
-/* Precios demo */
+/* Precios demo para la ficha */
 const PRICE_MAP_USD: Record<string, number> = {
   Oro: 80000,
   Plata: 900,
@@ -61,6 +62,21 @@ export default function AnalisisPage() {
   // Parámetros
   const [sampleCode, setSampleCode] = React.useState("MQ-0001");
   const [currency, setCurrency] = React.useState<CurrencyCode>("USD");
+
+  // ==== NUEVO: overrides por commodity (Cu/Zn/Pb) ====
+  const [adj, setAdj] = React.useState<CommodityAdjustments>({
+    Cobre: { recovery: 0.88, payable: 0.96 },
+    Zinc: { recovery: 0.85, payable: 0.85 },
+    Plomo: { recovery: 0.90, payable: 0.90 },
+  });
+
+  const setNum = (metal: "Cobre" | "Zinc" | "Plomo", field: "recovery" | "payable", val: string) => {
+    const pct = Math.max(0, Math.min(100, Number(val)));
+    setAdj((prev) => ({
+      ...prev,
+      [metal]: { ...prev[metal], [field]: isFinite(pct) ? pct / 100 : prev[metal][field] },
+    }));
+  };
 
   // Resultados
   const [globalResults, setGlobalResults] = React.useState<MineralResult[]>([]);
@@ -87,7 +103,7 @@ export default function AnalisisPage() {
   // Ubicación
   const handleGeo = React.useCallback((g: GeoResult) => setGeo(g), []);
 
-  // ===== Análisis con Gemini (tu endpoint /api/analyze) =====
+  // ===== Análisis con Gemini =====
   async function handleAnalyze() {
     if (!photos.length) {
       alert("Primero toma o sube al menos una foto.");
@@ -99,13 +115,17 @@ export default function AnalisisPage() {
       photos.forEach((p) => form.append("images", p.file, p.file.name || "foto.jpg"));
 
       const r = await fetch("/api/analyze", { method: "POST", body: form });
+      const ct = (r.headers.get("content-type") || "").toLowerCase();
+      if (!ct.includes("application/json")) {
+        const txt = await r.text();
+        throw new Error(`El servidor no devolvió JSON (${r.status}). Resumen: ${txt.slice(0, 120)}`);
+      }
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "Error analizando");
 
       const perFromApi = (j?.perImage ?? []) as { fileName: string; results: MineralResult[] }[];
       setPerImage(perFromApi);
 
-      // Global promedio simple
       const totals = new Map<string, number>();
       const counts = new Map<string, number>();
       perFromApi.forEach((img) => {
@@ -128,7 +148,8 @@ export default function AnalisisPage() {
       }
       setGlobalResults(normalized);
     } catch (e: any) {
-      alert(e?.message || "Error analizando");
+      console.error("[Analyze] Error:", e);
+      alert(e?.message || "Error analizando (revisa la consola - F12).");
     } finally {
       setBusyAnalyze(false);
     }
@@ -158,13 +179,18 @@ export default function AnalisisPage() {
             }
           : undefined,
         embedStaticMap: true,
+
+        // ↓↓↓ NUEVO: enviar overrides al PDF ↓↓↓
+        recoveryPayables: adj,
       });
       const buffer = doc.output("arraybuffer");
       downloadPdf(new Uint8Array(buffer), `Reporte_${sampleCode}.pdf`);
     } catch (e: any) {
       console.error("[PDF General] Error:", e);
-      alert("No se pudo generar el PDF general. Revisa la consola (F12) → Console.\n" +
-            "Si ves 'autoTable is not a function', instala y reinicia: npm i jspdf jspdf-autotable");
+      alert(
+        "No se pudo generar el PDF general. Revisa la consola (F12) → Console.\n" +
+          "Si ves 'autoTable is not a function', instala y reinicia: npm i jspdf jspdf-autotable"
+      );
     } finally {
       setBusyGeneralPdf(false);
     }
@@ -178,8 +204,12 @@ export default function AnalisisPage() {
     setLoadingInfo(true);
     try {
       const r = await fetch(`/api/mineral-info?name=${encodeURIComponent(m.name)}`, { cache: "no-store" });
+      const ct = (r.headers.get("content-type") || "").toLowerCase();
+      if (!ct.includes("application/json")) {
+        const txt = await r.text();
+        throw new Error(`Ficha no JSON (${r.status}): ${txt.slice(0, 120)}`);
+      }
       const info = (await r.json()) as MineralInfoWeb;
-      console.log("[Ficha] Respuesta /api/mineral-info:", info);
       setModalInfo(info);
     } catch (e) {
       console.error("[Ficha] Error obteniendo info:", e);
@@ -256,6 +286,45 @@ export default function AnalisisPage() {
             </div>
           </div>
 
+          {/* ==== NUEVO: Panel de ajustes por commodity ==== */}
+          <div className="mb-4 border rounded-lg p-3 bg-gray-50">
+            <div className="font-semibold mb-2">Recuperación y Payable por commodity</div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {(["Cobre", "Zinc", "Plomo"] as const).map((metal) => (
+                <div key={metal} className="border rounded p-2 bg-white">
+                  <div className="text-sm font-medium mb-1">{metal}</div>
+                  <div className="flex items-center gap-2 text-sm">
+                    <label className="w-16">Rec. %</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step="1"
+                      value={Math.round((adj[metal]?.recovery ?? 0) * 100)}
+                      onChange={(e) => setNum(metal, "recovery", e.target.value)}
+                      className="border rounded px-2 py-1 w-20"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 text-sm mt-2">
+                    <label className="w-16">Pay. %</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step="1"
+                      value={Math.round((adj[metal]?.payable ?? 0) * 100)}
+                      onChange={(e) => setNum(metal, "payable", e.target.value)}
+                      className="border rounded px-2 py-1 w-20"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-[12px] text-gray-600 mt-2">
+              Si un metal no está en esta lista, se usa el valor global por defecto (Rec. 85% • Pay. 96%).
+            </p>
+          </div>
+
           <div className="mb-3">
             <CameraCapture onPhotos={handlePhotos} />
           </div>
@@ -273,25 +342,22 @@ export default function AnalisisPage() {
 
           <div className="mb-6">
             <GeoCapture onChange={setGeo} />
-            {geo?.point && (
-              <div className="mt-3">
-                <img
-                  src={`/api/staticmap?lat=${geo.point.lat}&lng=${geo.point.lng}&zoom=14&size=640x360`}
-                  alt="Mapa de ubicación"
-                  className="rounded-lg border shadow w/full max-w-md"
-                />
-              </div>
-            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <button onClick={handleAnalyze} disabled={!canAnalyze || busyAnalyze}
-              className="px-4 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50">
+            <button
+              onClick={handleAnalyze}
+              disabled={!canAnalyze || busyAnalyze}
+              className="px-4 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
               {busyAnalyze ? "Analizando…" : "Analizar"}
             </button>
 
-            <button onClick={handleExportGeneralPdf} disabled={!resultsReady || busyGeneralPdf}
-              className="px-4 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
+            <button
+              onClick={handleExportGeneralPdf}
+              disabled={!resultsReady || busyGeneralPdf}
+              className="px-4 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
               {busyGeneralPdf ? "Generando PDF…" : "Generar PDF general"}
             </button>
           </div>
@@ -321,8 +387,10 @@ export default function AnalisisPage() {
                         <td className="px-3 py-2">{r.name}</td>
                         <td className="px-3 py-2 text-right">{r.pct.toFixed(1)}</td>
                         <td className="px-3 py-2 text-center">
-                          <button onClick={() => openMineral(r)}
-                            className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700">
+                          <button
+                            onClick={() => openMineral(r)}
+                            className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+                          >
                             Ver ficha
                           </button>
                         </td>
@@ -336,7 +404,9 @@ export default function AnalisisPage() {
                 <h4 className="font-semibold mb-2">Resultados por imagen</h4>
                 {perImage.map((img, idx) => (
                   <div key={idx} className="mb-3">
-                    <div className="text-sm font-medium mb-1">{idx + 1}. {img.fileName}</div>
+                    <div className="text-sm font-medium mb-1">
+                      {idx + 1}. {img.fileName}
+                    </div>
                     <table className="min-w-full text-sm">
                       <thead>
                         <tr className="bg-gray-50">
@@ -351,8 +421,10 @@ export default function AnalisisPage() {
                             <td className="px-3 py-2">{r.name}</td>
                             <td className="px-3 py-2 text-right">{r.pct.toFixed(1)}</td>
                             <td className="px-3 py-2 text-center">
-                              <button onClick={() => openMineral(r)}
-                                className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700">
+                              <button
+                                onClick={() => openMineral(r)}
+                                className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+                              >
                                 Ver ficha
                               </button>
                             </td>
@@ -374,8 +446,12 @@ export default function AnalisisPage() {
           <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl">
             <div className="px-4 py-3 border-b flex items-center justify-between">
               <h4 className="font-semibold">{modalInfo?.nombre || modalMineral?.name || "Ficha técnica"}</h4>
-              <button onClick={() => setModalOpen(false)}
-                className="px-2 py-1 rounded bg-gray-200 hover:bg-gray-300">Cerrar</button>
+              <button
+                onClick={() => setModalOpen(false)}
+                className="px-2 py-1 rounded bg-gray-200 hover:bg-gray-300"
+              >
+                Cerrar
+              </button>
             </div>
 
             <div className="p-5 text-sm">
@@ -386,7 +462,9 @@ export default function AnalisisPage() {
               ) : (
                 <>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2">
-                    <div className="md:col-span-2 text-xl font-bold">{modalInfo?.nombre || modalMineral.name}</div>
+                    <div className="md:col-span-2 text-xl font-bold">
+                      {modalInfo?.nombre || modalMineral.name}
+                    </div>
                     <div><b>Fórmula:</b> {fmt(modalInfo?.formula)}</div>
                     <div><b>Commodity:</b> {fmt(modalInfo?.commodity)}</div>
                     <div><b>Densidad (g/cm³):</b> {fmt(modalInfo?.densidad)}</div>
@@ -401,25 +479,14 @@ export default function AnalisisPage() {
                     <div className="md:col-span-2 pt-2">
                       <b>% en la muestra:</b> {modalMineral.pct.toFixed(2)} %
                     </div>
-                    {modalInfo?.fuentes && modalInfo.fuentes.length > 0 && (
-                      <div className="md:col-span-2">
-                        <b>Fuentes:</b>
-                        <ul className="list-disc ml-5 mt-1">
-                          {modalInfo.fuentes.map((f, i) => (
-                            <li key={i}>
-                              <a href={f.url} target="_blank" rel="noreferrer" className="text-blue-700 underline">
-                                {f.title || f.url}
-                              </a>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
                   </div>
 
                   <div className="pt-4">
-                    <button onClick={exportMineralPdf} disabled={busyMineralPdf}
-                      className="px-3 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
+                    <button
+                      onClick={exportMineralPdf}
+                      disabled={busyMineralPdf}
+                      className="px-3 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                    >
                       {busyMineralPdf ? "Generando PDF…" : "Descargar PDF de este mineral"}
                     </button>
                   </div>
