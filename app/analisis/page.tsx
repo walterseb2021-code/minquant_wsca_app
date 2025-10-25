@@ -24,7 +24,7 @@ async function fileToDataURL(file: File): Promise<string> {
   });
 }
 
-/* === NUEVO: redimensionar/comprimir imagen antes de subir === */
+/* === Redimensionar/comprimir imagen antes de subir === */
 async function resizeImageFile(file: File, maxWH = 1280, quality = 0.7): Promise<Blob> {
   const bitmap = await createImageBitmap(file);
   const { width, height } = bitmap;
@@ -132,7 +132,7 @@ export default function AnalisisPage() {
     try {
       const form = new FormData();
 
-      // Limitar a 6 fotos y comprimir cada una
+      // Limitar a 6 fotos y comprimir cada una (las demás se ignoran)
       const MAX = 6;
       const subset = photos.slice(0, MAX);
       for (const p of subset) {
@@ -273,6 +273,11 @@ export default function AnalisisPage() {
 
   const fmt = (v?: string | number | null) => (v == null || v === "" ? "—" : String(v));
 
+  // ====== Aviso visual si hay más de 6 fotos ======
+  const MAX_UI = 6;
+  const willSend = Math.min(photos.length, MAX_UI);
+  const extra = Math.max(0, photos.length - MAX_UI);
+
   return (
     <main className="min-h-screen">
       <header className="w-full py-3 px-5 bg-gradient-to-r from-cyan-600 to-emerald-600 text-white">
@@ -352,6 +357,13 @@ export default function AnalisisPage() {
             <CameraCapture onPhotos={handlePhotos} />
           </div>
 
+          {/* AVISO si hay más de 6 fotos */}
+          {extra > 0 && (
+            <div className="mb-3 rounded border border-amber-300 bg-amber-50 text-amber-900 px-3 py-2 text-sm">
+              <b>Aviso:</b> Solo se procesarán <b>6</b> fotos ({willSend} de {photos.length}). El resto será ignorado.
+            </div>
+          )}
+
           {photos.length > 0 && (
             <div className="mb-6 grid grid-cols-2 md:grid-cols-3 gap-3">
               {photos.map((p, i) => (
@@ -372,8 +384,13 @@ export default function AnalisisPage() {
               onClick={handleAnalyze}
               disabled={!canAnalyze || busyAnalyze}
               className="px-4 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+              title={extra > 0 ? `Se enviarán ${willSend} de ${photos.length} fotos` : undefined}
             >
-              {busyAnalyze ? "Analizando…" : "Analizar"}
+              {busyAnalyze
+                ? "Analizando…"
+                : extra > 0
+                ? `Analizar (${willSend}/${photos.length})`
+                : "Analizar"}
             </button>
 
             <button
