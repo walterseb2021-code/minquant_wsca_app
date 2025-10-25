@@ -24,17 +24,15 @@ async function fileToDataURL(file: File): Promise<string> {
   });
 }
 
-/* === Redimensionar/comprimir imagen antes de subir === */
+/* Redimensionar/comprimir imagen antes de subir */
 async function resizeImageFile(file: File, maxWH = 1280, quality = 0.7): Promise<Blob> {
   const bitmap = await createImageBitmap(file);
   const { width, height } = bitmap;
   const scale = Math.min(1, maxWH / Math.max(width, height));
   const dstW = Math.max(1, Math.round(width * scale));
   const dstH = Math.max(1, Math.round(height * scale));
-
   const canvas = document.createElement("canvas");
-  canvas.width = dstW;
-  canvas.height = dstH;
+  canvas.width = dstW; canvas.height = dstH;
   const ctx = canvas.getContext("2d")!;
   ctx.drawImage(bitmap, 0, 0, dstW, dstH);
   const blob: Blob = await new Promise((resolve) =>
@@ -44,33 +42,16 @@ async function resizeImageFile(file: File, maxWH = 1280, quality = 0.7): Promise
   return blob;
 }
 
-/* Respuesta de /api/mineral-info */
+/* /api/mineral-info */
 type MineralInfoWeb = {
-  nombre: string;
-  formula?: string;
-  densidad?: string;
-  color?: string;
-  habito?: string;
-  ocurrencia?: string;
-  notas?: string;
-  mohs?: string;
-  brillo?: string;
-  sistema?: string;
-  asociados?: string;
-  commodity?: string;
-  fuentes?: { title: string; url: string }[];
+  nombre: string; formula?: string; densidad?: string; color?: string; habito?: string;
+  ocurrencia?: string; notas?: string; mohs?: string; brillo?: string; sistema?: string;
+  asociados?: string; commodity?: string; fuentes?: { title: string; url: string }[];
 };
 
-/* Precios demo para la ficha */
+/* Precios demo (ficha) */
 const PRICE_MAP_USD: Record<string, number> = {
-  Oro: 80000,
-  Plata: 900,
-  Cobre: 9000,
-  Litio: 15000,
-  Platino: 30000,
-  Calcita: 38.4,
-  Cuarzo: 22,
-  Feldespato: 30.2,
+  Oro: 80000, Plata: 900, Cobre: 9000, Litio: 15000, Platino: 30000, Calcita: 38.4, Cuarzo: 22, Feldespato: 30.2,
 };
 
 export default function AnalisisPage() {
@@ -100,6 +81,7 @@ export default function AnalisisPage() {
   // Resultados
   const [globalResults, setGlobalResults] = React.useState<MineralResult[]>([]);
   const [perImage, setPerImage] = React.useState<{ fileName: string; results: MineralResult[] }[]>([]);
+  const [excluded, setExcluded] = React.useState<{ fileName: string; reason: string }[]>([]);
 
   // Estados UI
   const [busyAnalyze, setBusyAnalyze] = React.useState(false);
@@ -112,7 +94,7 @@ export default function AnalisisPage() {
   const [modalInfo, setModalInfo] = React.useState<MineralInfoWeb | null>(null);
   const [loadingInfo, setLoadingInfo] = React.useState(false);
 
-  // Fotos -> dataURLs para PDF
+  // Fotos -> dataURLs
   const handlePhotos = React.useCallback(async (arr: CapturedPhoto[]) => {
     setPhotos(arr);
     const dataurls = await Promise.all(arr.map((p) => fileToDataURL(p.file)));
@@ -124,15 +106,10 @@ export default function AnalisisPage() {
 
   // ===== Análisis (/api/analyze) con envío comprimido =====
   async function handleAnalyze() {
-    if (!photos.length) {
-      alert("Primero toma o sube al menos una foto.");
-      return;
-    }
+    if (!photos.length) { alert("Primero toma o sube al menos una foto."); return; }
     setBusyAnalyze(true);
     try {
       const form = new FormData();
-
-      // Limitar a 6 fotos y comprimir cada una (las demás se ignoran)
       const MAX = 6;
       const subset = photos.slice(0, MAX);
       for (const p of subset) {
@@ -152,6 +129,7 @@ export default function AnalisisPage() {
 
       const perFromApi = (j?.perImage ?? []) as { fileName: string; results: MineralResult[] }[];
       setPerImage(perFromApi);
+      setExcluded(Array.isArray(j?.excluded) ? j.excluded : []);
 
       // Global promedio simple normalizado a 100
       const totals = new Map<string, number>();
@@ -164,8 +142,7 @@ export default function AnalisisPage() {
         });
       });
       const global: MineralResult[] = Array.from(totals.entries()).map(([name, sum]) => ({
-        name,
-        pct: sum / (counts.get(name) || 1),
+        name, pct: sum / (counts.get(name) || 1),
       }));
       const sum = global.reduce((a, b) => a + b.pct, 0) || 1;
       let normalized = global.map((g) => ({ name: g.name, pct: Math.round((g.pct / sum) * 1000) / 10 }));
@@ -185,10 +162,7 @@ export default function AnalisisPage() {
 
   // ===== PDF General =====
   async function handleExportGeneralPdf() {
-    if (!globalResults.length || !perImage.length) {
-      alert("Primero realiza el análisis.");
-      return;
-    }
+    if (!globalResults.length || !perImage.length) { alert("Primero realiza el análisis."); return; }
     setBusyGeneralPdf(true);
     try {
       const doc = await buildReportPdf({
@@ -199,50 +173,30 @@ export default function AnalisisPage() {
         imageDataUrls: imagesDataURL,
         generatedAt: new Date().toISOString(),
         location: geo?.point
-          ? {
-              lat: geo.point.lat,
-              lng: geo.point.lng,
-              accuracy: geo.point.accuracy,
-              address: geo.address?.formatted,
-            }
+          ? { lat: geo.point.lat, lng: geo.point.lng, accuracy: geo.point.accuracy, address: geo.address?.formatted }
           : undefined,
         embedStaticMap: true,
-        recoveryPayables: adj, // ← pasa overrides al PDF
+        recoveryPayables: adj,
       });
       const buffer = doc.output("arraybuffer");
       downloadPdf(new Uint8Array(buffer), `Reporte_${sampleCode}.pdf`);
     } catch (e: any) {
       console.error("[PDF General] Error:", e);
-      alert(
-        "No se pudo generar el PDF general. Revisa la consola (F12) → Console.\n" +
-          "Si ves 'autoTable is not a function', instala y reinicia: npm i jspdf jspdf-autotable"
-      );
-    } finally {
-      setBusyGeneralPdf(false);
-    }
+      alert("No se pudo generar el PDF general. Revisa la consola (F12) → Console.\nSi ves 'autoTable is not a function', instala: npm i jspdf jspdf-autotable");
+    } finally { setBusyGeneralPdf(false); }
   }
 
   // ===== Ficha =====
   async function openMineral(m: MineralResult) {
-    setModalMineral(m);
-    setModalOpen(true);
-    setModalInfo(null);
-    setLoadingInfo(true);
+    setModalMineral(m); setModalOpen(true); setModalInfo(null); setLoadingInfo(true);
     try {
       const r = await fetch(`/api/mineral-info?name=${encodeURIComponent(m.name)}`, { cache: "no-store" });
       const ct = (r.headers.get("content-type") || "").toLowerCase();
-      if (!ct.includes("application/json")) {
-        const txt = await r.text();
-        throw new Error(`Ficha no JSON (${r.status}): ${txt.slice(0, 120)}`);
-      }
+      if (!ct.includes("application/json")) { const txt = await r.text(); throw new Error(`Ficha no JSON (${r.status}): ${txt.slice(0, 120)}`); }
       const info = (await r.json()) as MineralInfoWeb;
       setModalInfo(info);
-    } catch (e) {
-      console.error("[Ficha] Error obteniendo info:", e);
-      setModalInfo({ nombre: m.name });
-    } finally {
-      setLoadingInfo(false);
-    }
+    } catch { setModalInfo({ nombre: m.name }); }
+    finally { setLoadingInfo(false); }
   }
 
   async function exportMineralPdf() {
@@ -252,20 +206,14 @@ export default function AnalisisPage() {
       const { name, pct } = modalMineral;
       const price = PRICE_MAP_USD[name] ?? 0;
       const bytes = await buildMineralPdf({
-        mineralName: modalInfo?.nombre || name,
-        price,
-        samplePct: pct,
-        currency,
-        notes: modalInfo?.notas || undefined,
-        infoOverride: modalInfo || undefined,
+        mineralName: modalInfo?.nombre || name, price, samplePct: pct, currency,
+        notes: modalInfo?.notas || undefined, infoOverride: modalInfo || undefined,
       });
       downloadPdf(bytes, `Ficha_${(modalInfo?.nombre || name).replace(/\s+/g, "_")}.pdf`);
     } catch (e: any) {
       console.error("[PDF Mineral] Error:", e);
       alert("No se pudo generar el PDF del mineral. Revisa consola (F12) → Console.");
-    } finally {
-      setBusyMineralPdf(false);
-    }
+    } finally { setBusyMineralPdf(false); }
   }
 
   const canAnalyze = photos.length > 0;
@@ -273,10 +221,20 @@ export default function AnalisisPage() {
 
   const fmt = (v?: string | number | null) => (v == null || v === "" ? "—" : String(v));
 
-  // ====== Aviso visual si hay más de 6 fotos ======
+  // Aviso > 6 fotos
   const MAX_UI = 6;
   const willSend = Math.min(photos.length, MAX_UI);
   const extra = Math.max(0, photos.length - MAX_UI);
+
+  function prettyReason(r: string) {
+    switch (r) {
+      case "timeout": return "Tiempo de respuesta agotado (servidor).";
+      case "parse_error": return "Respuesta inválida del modelo.";
+      case "low_confidence": return "Resultados con confianza insuficiente.";
+      case "no_consensus": return "Sin consenso entre imágenes.";
+      default: return r;
+    }
+  }
 
   return (
     <main className="min-h-screen">
@@ -293,20 +251,11 @@ export default function AnalisisPage() {
           <div className="flex flex-wrap items-end gap-4 mb-4">
             <div>
               <label className="text-sm text-gray-700">Código de muestra</label>
-              <input
-                value={sampleCode}
-                onChange={(e) => setSampleCode(e.target.value)}
-                className="mt-1 border rounded px-3 py-2"
-                placeholder="Ej. MQ-0001"
-              />
+              <input value={sampleCode} onChange={(e) => setSampleCode(e.target.value)} className="mt-1 border rounded px-3 py-2" placeholder="Ej. MQ-0001" />
             </div>
             <div>
               <label className="text-sm text-gray-700">Moneda</label>
-              <select
-                value={currency}
-                onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
-                className="mt-1 border rounded px-3 py-2"
-              >
+              <select value={currency} onChange={(e) => setCurrency(e.target.value as CurrencyCode)} className="mt-1 border rounded px-3 py-2">
                 <option value="USD">USD (US$)</option>
                 <option value="PEN">PEN (S/.)</option>
                 <option value="EUR">EUR (€)</option>
@@ -323,34 +272,22 @@ export default function AnalisisPage() {
                   <div className="text-sm font-medium mb-1">{metal}</div>
                   <div className="flex items-center gap-2 text-sm">
                     <label className="w-16">Rec. %</label>
-                    <input
-                      type="number"
-                      min={0}
-                      max={100}
-                      step="1"
+                    <input type="number" min={0} max={100} step="1"
                       value={Math.round((adj[metal]?.recovery ?? 0) * 100)}
                       onChange={(e) => setNum(metal, "recovery", e.target.value)}
-                      className="border rounded px-2 py-1 w-20"
-                    />
+                      className="border rounded px-2 py-1 w-20" />
                   </div>
                   <div className="flex items-center gap-2 text-sm mt-2">
                     <label className="w-16">Pay. %</label>
-                    <input
-                      type="number"
-                      min={0}
-                      max={100}
-                      step="1"
+                    <input type="number" min={0} max={100} step="1"
                       value={Math.round((adj[metal]?.payable ?? 0) * 100)}
                       onChange={(e) => setNum(metal, "payable", e.target.value)}
-                      className="border rounded px-2 py-1 w-20"
-                    />
+                      className="border rounded px-2 py-1 w-20" />
                   </div>
                 </div>
               ))}
             </div>
-            <p className="text-[12px] text-gray-600 mt-2">
-              Si un metal no está en esta lista, se usan valores por defecto (Rec. 85% • Pay. 96%).
-            </p>
+            <p className="text-[12px] text-gray-600 mt-2">Si un metal no está en esta lista, se usan valores por defecto (Rec. 85% • Pay. 96%).</p>
           </div>
 
           <div className="mb-3">
@@ -380,24 +317,14 @@ export default function AnalisisPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <button
-              onClick={handleAnalyze}
-              disabled={!canAnalyze || busyAnalyze}
+            <button onClick={handleAnalyze} disabled={!canAnalyze || busyAnalyze}
               className="px-4 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
-              title={extra > 0 ? `Se enviarán ${willSend} de ${photos.length} fotos` : undefined}
-            >
-              {busyAnalyze
-                ? "Analizando…"
-                : extra > 0
-                ? `Analizar (${willSend}/${photos.length})`
-                : "Analizar"}
+              title={extra > 0 ? `Se enviarán ${willSend} de ${photos.length} fotos` : undefined}>
+              {busyAnalyze ? "Analizando…" : extra > 0 ? `Analizar (${willSend}/${photos.length})` : "Analizar"}
             </button>
 
-            <button
-              onClick={handleExportGeneralPdf}
-              disabled={!resultsReady || busyGeneralPdf}
-              className="px-4 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
-            >
+            <button onClick={handleExportGeneralPdf} disabled={!resultsReady || busyGeneralPdf}
+              className="px-4 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
               {busyGeneralPdf ? "Generando PDF…" : "Generar PDF general"}
             </button>
           </div>
@@ -427,12 +354,7 @@ export default function AnalisisPage() {
                         <td className="px-3 py-2">{r.name}</td>
                         <td className="px-3 py-2 text-right">{r.pct.toFixed(1)}</td>
                         <td className="px-3 py-2 text-center">
-                          <button
-                            onClick={() => openMineral(r)}
-                            className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
-                          >
-                            Ver ficha
-                          </button>
+                          <button onClick={() => openMineral(r)} className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700">Ver ficha</button>
                         </td>
                       </tr>
                     ))}
@@ -444,9 +366,7 @@ export default function AnalisisPage() {
                 <h4 className="font-semibold mb-2">Resultados por imagen</h4>
                 {perImage.map((img, idx) => (
                   <div key={idx} className="mb-3">
-                    <div className="text-sm font-medium mb-1">
-                      {idx + 1}. {img.fileName}
-                    </div>
+                    <div className="text-sm font-medium mb-1">{idx + 1}. {img.fileName}</div>
                     <table className="min-w-full text-sm">
                       <thead>
                         <tr className="bg-gray-50">
@@ -461,12 +381,7 @@ export default function AnalisisPage() {
                             <td className="px-3 py-2">{r.name}</td>
                             <td className="px-3 py-2 text-right">{r.pct.toFixed(1)}</td>
                             <td className="px-3 py-2 text-center">
-                              <button
-                                onClick={() => openMineral(r)}
-                                className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
-                              >
-                                Ver ficha
-                              </button>
+                              <button onClick={() => openMineral(r)} className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700">Ver ficha</button>
                             </td>
                           </tr>
                         ))}
@@ -475,6 +390,23 @@ export default function AnalisisPage() {
                   </div>
                 ))}
               </div>
+
+              {/* Panel: Imágenes excluidas por baja confianza / consenso / errores */}
+              {excluded.length > 0 && (
+                <div className="border rounded-xl p-3 bg-yellow-50">
+                  <h4 className="font-semibold mb-2 text-yellow-900">Imágenes excluidas / baja confianza</h4>
+                  <ul className="list-disc ml-5 text-sm text-yellow-900">
+                    {excluded.map((e, i) => (
+                      <li key={i}>
+                        <b>{e.fileName}</b>: {prettyReason(e.reason)}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-[12px] text-yellow-800 mt-2">
+                    Consejo: prueba con mejor iluminación, foco nítido y encuadre estable de la muestra.
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -497,9 +429,7 @@ export default function AnalisisPage() {
               ) : (
                 <>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2">
-                    <div className="md:col-span-2 text-xl font-bold">
-                      {modalInfo?.nombre || modalMineral.name}
-                    </div>
+                    <div className="md:col-span-2 text-xl font-bold">{modalInfo?.nombre || modalMineral.name}</div>
                     <div><b>Fórmula:</b> {fmt(modalInfo?.formula)}</div>
                     <div><b>Commodity:</b> {fmt(modalInfo?.commodity)}</div>
                     <div><b>Densidad (g/cm³):</b> {fmt(modalInfo?.densidad)}</div>
@@ -511,17 +441,12 @@ export default function AnalisisPage() {
                     <div className="md:col-span-2"><b>Ocurrencia:</b> {fmt(modalInfo?.ocurrencia)}</div>
                     <div className="md:col-span-2"><b>Asociados:</b> {fmt(modalInfo?.asociados)}</div>
                     <div className="md:col-span-2"><b>Notas:</b> {fmt(modalInfo?.notas)}</div>
-                    <div className="md:col-span-2 pt-2">
-                      <b>% en la muestra:</b> {modalMineral.pct.toFixed(2)} %
-                    </div>
+                    <div className="md:col-span-2 pt-2"><b>% en la muestra:</b> {modalMineral.pct.toFixed(2)} %</div>
                   </div>
 
                   <div className="pt-4">
-                    <button
-                      onClick={exportMineralPdf}
-                      disabled={busyMineralPdf}
-                      className="px-3 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
-                    >
+                    <button onClick={exportMineralPdf} disabled={busyMineralPdf}
+                      className="px-3 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
                       {busyMineralPdf ? "Generando PDF…" : "Descargar PDF de este mineral"}
                     </button>
                   </div>
