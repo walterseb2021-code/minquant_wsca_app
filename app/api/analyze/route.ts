@@ -2,6 +2,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export const runtime = "nodejs";
+// Si tu plan lo permite puedes subir a 120. Con el gratuito/preview, 60 es lo seguro.
 export const maxDuration = 60;
 
 type MineralResult = { name: string; pct: number; confidence?: number; evidence?: string };
@@ -23,8 +24,13 @@ const STATIC_FALLBACKS = [
   "gemini-pro-latest",
 ];
 
-const MAX_RETRIES = 3;
-const INITIAL_DELAY_MS = 800;
+const MAX_RETRIES = 2;
+const INITIAL_DELAY_MS = 700;
+
+// === Nuevos límites para evitar timeout global ===
+const SERVER_MAX_IMAGES = 6;
+const PER_IMAGE_TIMEOUT_MS = 15_000;   // 15s por imagen
+const CONCURRENCY = 2;                  // 2 imágenes a la vez
 
 // ---------- utils básicos
 const toBase64 = (f: File) => f.arrayBuffer().then(ab => Buffer.from(ab).toString("base64"));
@@ -35,7 +41,14 @@ const cleanName = (raw: string) =>
     .replace(/\s+/g, " ")
     .replace(/^./, c => c.toUpperCase());
 
-function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+function withTimeout<T>(p: Promise<T>, ms: number, tag = "timeout"): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(tag)), ms);
+    p.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
+  });
+}
 
 function mergeDuplicates(arr: MineralResult[]): MineralResult[] {
   const map = new Map<string, MineralResult>();
@@ -153,7 +166,6 @@ async function listModelsForKey(apiKey: string): Promise<string[]> {
     return names.map(n => n.replace(/^models\//, ""));
   } catch { return []; }
 }
-
 async function getFirstWorkingModel(ai: GoogleGenerativeAI, apiKey: string) {
   const fromApi = await listModelsForKey(apiKey);
   const candidates = [...new Set([...fromApi, ...STATIC_FALLBACKS])];
@@ -171,7 +183,7 @@ async function getFirstWorkingModel(ai: GoogleGenerativeAI, apiKey: string) {
         } as any,
       });
 
-      // “ping” liviano con retry: evita quedarnos con un modelo saturado
+      // pequeño ping para evitar quedarnos con un modelo saturado
       await genWithRetry(model, [{ role: "user", parts: [{ text: "ok" }] }]);
       return model;
     } catch (e: any) {
@@ -190,7 +202,6 @@ async function genWithRetry(
   let delay = INITIAL_DELAY_MS;
   for (let i = 0; i <= MAX_RETRIES; i++) {
     try {
-      // SDK v1 acepta objeto contents o array de messages; mantenemos compatibilidad
       const res = await (model as any).generateContent({ contents });
       return res;
     } catch (e: any) {
@@ -198,7 +209,7 @@ async function genWithRetry(
       const maybeOverload = /(?:503|overloaded|quota|rate|429)/i.test(msg);
       if (i < MAX_RETRIES && maybeOverload) {
         await sleep(delay);
-        delay *= 1.6; // backoff
+        delay *= 1.6;
         continue;
       }
       throw e;
@@ -208,12 +219,7 @@ async function genWithRetry(
 }
 
 /* ===========================  MODO OFFLINE  =========================== */
-/** Para pruebas sin Gemini. Activa con:
- *   - .env.local → ANALYZE_OFFLINE=1
- *   - o llamando /api/analyze?offline=1
- */
 function offlineAnalyze(files: File[]) {
-  // minerales “demo” frecuentes
   const demoSets: string[][] = [
     ["Malaquita", "Azurita", "Limonita"],
     ["Cuarzo", "Calcita", "Hematita"],
@@ -221,21 +227,15 @@ function offlineAnalyze(files: File[]) {
   ];
   const perImage = files.map((f, idx) => {
     const set = demoSets[idx % demoSets.length];
-    // reparto simple 50/30/20 con pequeñas variaciones
     const base = [50, 30, 20];
     const jitter = base.map(v => v + (Math.random() * 6 - 3));
     const sum = jitter.reduce((a, b) => a + b, 0);
     const norm = jitter.map(v => +(v / sum * 100).toFixed(2));
-
     const results: MineralResult[] = set.map((n, i) => ({
-      name: n,
-      pct: norm[i],
-      confidence: 0.9 - i * 0.15,
-      evidence: "offline",
+      name: n, pct: norm[i], confidence: 0.9 - i * 0.15, evidence: "offline",
     }));
     return { fileName: f.name || `foto-${idx + 1}.jpg`, results: normalizeTo100(results) };
   });
-
   const global = computeGlobal(perImage);
   return { perImage, global, offline: true };
 }
@@ -243,13 +243,16 @@ function offlineAnalyze(files: File[]) {
 /* ===========================   HANDLER    =========================== */
 export async function POST(req: Request) {
   try {
-    // ¿modo offline?
     const url = new URL(req.url);
     const offlineFlag = url.searchParams.get("offline") === "1" || process.env.ANALYZE_OFFLINE === "1";
 
     const form = await req.formData();
-    const files = form.getAll("images") as File[];
+    let files = (form.getAll("images") as File[]).filter(Boolean);
+
     if (!files.length) return Response.json({ error: "Sin imágenes" }, { status: 400 });
+
+    // recorta en servidor (defensivo)
+    if (files.length > SERVER_MAX_IMAGES) files = files.slice(0, SERVER_MAX_IMAGES);
 
     if (offlineFlag) {
       const out = offlineAnalyze(files);
@@ -264,38 +267,65 @@ export async function POST(req: Request) {
     const ai = new GoogleGenerativeAI(apiKey);
     const model = await getFirstWorkingModel(ai, apiKey);
 
-    const perRaw: { fileName: string; results: MineralResult[] }[] = [];
+    // prompt fijo
+    const prompt =
+      `Devuelve SOLO JSON EXACTO:\n` +
+      `{\n  "results": [\n    {"name":"<mineral>","pct":<numero>,"confidence":<0..1>,"evidence":"<color/textura/forma>"}\n  ]\n}\n` +
+      `Reglas:\n` +
+      `1) Da de 2 a 5 minerales plausibles en la foto.\n` +
+      `2) Suma de "pct" = 100.00 (dos decimales).\n` +
+      `3) Usa nombres estándar (Calcita, Cuarzo, Pirita, Hematita, Magnetita, Malaquita, Azurita, etc.).\n` +
+      `4) Sé conservador con "confidence".\n` +
+      `5) Sin texto fuera del JSON.`;
 
-    for (const f of files) {
-      const b64 = await toBase64(f);
-      const mime = f.type || "image/jpeg";
-      const prompt =
-        `Devuelve SOLO JSON EXACTO:\n` +
-        `{\n  "results": [\n    {"name":"<mineral>","pct":<numero>,"confidence":<0..1>,"evidence":"<color/textura/forma>"}\n  ]\n}\n` +
-        `Reglas:\n` +
-        `1) Da de 2 a 5 minerales plausibles en la foto.\n` +
-        `2) Suma de "pct" = 100.00 (dos decimales).\n` +
-        `3) Usa nombres estándar (Calcita, Cuarzo, Pirita, Hematita, Magnetita, Malaquita, Azurita, etc.).\n` +
-        `4) Sé conservador con "confidence".\n` +
-        `5) Sin texto fuera del JSON.`;
-
-      const res = await genWithRetry(
-        model,
-        [{ role: "user", parts: [{ inlineData: { mimeType: mime, data: b64 } }, { text: prompt }] }]
-      );
-
-      let results: MineralResult[] = [];
+    // ===== Procesamiento con concurrencia limitada + timeout por imagen
+    async function analyzeOne(f: File) {
       try {
+        const b64 = await toBase64(f);
+        const mime = f.type || "image/jpeg";
+
+        const res = await withTimeout(
+          genWithRetry(
+            model,
+            [{ role: "user", parts: [{ inlineData: { mimeType: mime, data: b64 } }, { text: prompt }] }]
+          ),
+          PER_IMAGE_TIMEOUT_MS,
+          "image_timeout"
+        );
+
         const rawText = res?.response?.text?.() ?? "";
         const parsed = extractJson(rawText) ?? {};
         const arr = Array.isArray((parsed as any).results) ? (parsed as any).results : [];
-        results = (arr as MineralResult[]).filter(Boolean);
-      } catch {
-        results = [];
-      }
+        const results: MineralResult[] = (arr as MineralResult[]).filter(Boolean);
 
-      perRaw.push({ fileName: f.name || "foto.jpg", results });
+        return { fileName: f.name || "foto.jpg", results };
+      } catch (e: any) {
+        // en caso de timeout/otro error, devolvemos fila "Indeterminado"
+        return {
+          fileName: f.name || "foto.jpg",
+          results: [{ name: "Indeterminado", pct: 100, confidence: 0.2 }],
+        };
+      }
     }
+
+    // limitador de concurrencia simple
+    const tasks: Promise<{ fileName: string; results: MineralResult[] }>[] = [];
+    let i = 0;
+    const runNext = async (): Promise<void> => {
+      if (i >= files.length) return;
+      const f = files[i++];
+      const p = analyzeOne(f).then(r => perRaw.push(r)).catch(() => perRaw.push({
+        fileName: f.name || "foto.jpg",
+        results: [{ name: "Indeterminado", pct: 100, confidence: 0.2 }],
+      })).finally(() => runNext());
+      tasks.push(p as any);
+    };
+
+    const perRaw: { fileName: string; results: MineralResult[] }[] = [];
+    // arranca N workers
+    await Promise.all(new Array(CONCURRENCY).fill(0).map(() => runNext()));
+    // espera a que terminen todos
+    await Promise.all(tasks);
 
     // Filtro + rescate
     let perImage = perRaw.map(x => {
