@@ -1,5 +1,6 @@
 // @ts-nocheck
 // lib/pdf.ts — PDFs para MinQuant_WSCA (portada + mapa, tablas, ficha y análisis económico realista)
+
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { getMineralInfo } from "./minerals";
@@ -18,7 +19,6 @@ const PAYABLE_DEFAULT = 0.96;
 /* =========================================================================
    HELPERS GENERALES
    ========================================================================= */
-
 // Imagen Blob -> dataURL (compatible con jsPDF.addImage)
 async function blobToDataURL(b: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -32,18 +32,13 @@ async function blobToDataURL(b: Blob): Promise<string> {
 // Proxy a nuestro endpoint de mapa estático OSM -> dataURL (PNG) con fallback local
 async function fetchStaticMapDataUrl(lat: number, lng: number, zoom = 14, size = "900x380") {
   const url = `/api/staticmap?lat=${lat}&lng=${lng}&zoom=${zoom}&size=${size}`;
-
   // PNG de respaldo (1x1 px) para NO fallar nunca; el PDF lo escala
   const FALLBACK_DATAURL =
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==";
-
   try {
     const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) {
-      return FALLBACK_DATAURL;
-    }
+    if (!res.ok) return FALLBACK_DATAURL;
     const blob = await res.blob();
-
     return await new Promise<string>((resolve) => {
       const fr = new FileReader();
       fr.onload = () => resolve(String(fr.result));
@@ -81,8 +76,6 @@ function titleCase(s: string) {
 /* =========================================================================
    MAPEO A COMMODITY + FACTORES ESTEQUIOMÉTRICOS (metal en mineral)
    ========================================================================= */
-
-// Normaliza texto para detectar commodity por palabras clave
 function _norm(s: string) {
   return (s || "")
     .normalize("NFD")
@@ -91,7 +84,6 @@ function _norm(s: string) {
     .trim();
 }
 
-// Normaliza el nombre de commodity a etiquetas estándar
 function normalizeCommodityName(raw?: string | null): string | null {
   if (!raw) return null;
   const s = _norm(raw);
@@ -144,7 +136,6 @@ const METAL_FACTOR: Record<string, { commodity: string; factor: number }> = {
   Calcocita: { commodity: "Cobre", factor: 0.798 },
   Chalcocite: { commodity: "Cobre", factor: 0.798 },
   Bornita: { commodity: "Cobre", factor: 0.633 },
-  Bornite: { commodity: "Cobre", factor: 0.633 },
 
   // Zinc
   Esfalerita: { commodity: "Zinc", factor: 0.671 },
@@ -174,6 +165,7 @@ const METAL_FACTOR: Record<string, { commodity: string; factor: number }> = {
   Magnetite: { commodity: "Hierro", factor: 0.724 },
   Goethita: { commodity: "Hierro", factor: 0.629 },
   Goethite: { commodity: "Hierro", factor: 0.629 },
+
   // Limonita (variable): aproximamos 0.50
   Limonita: { commodity: "Hierro", factor: 0.5 },
   Limonite: { commodity: "Hierro", factor: 0.5 },
@@ -183,18 +175,14 @@ const METAL_FACTOR: Record<string, { commodity: string; factor: number }> = {
 function commodityAndFactorFor(mineralName: string): { commodity: string | null; factor: number } {
   const nice = titleCase(mineralName.trim());
   if (METAL_FACTOR[nice]) return METAL_FACTOR[nice];
-
   const fb =
-    FALLBACK_MINERAL_TO_COMMODITY[nice] ||
-    FALLBACK_MINERAL_TO_COMMODITY[mineralName] ||
-    null;
+    FALLBACK_MINERAL_TO_COMMODITY[nice] || FALLBACK_MINERAL_TO_COMMODITY[mineralName] || null;
   return { commodity: fb, factor: fb ? 1.0 : 0 };
 }
 
 /* =========================================================================
    PRECIOS (dinámico con fallback)
    ========================================================================= */
-
 const TITLE_COLOR = "#0ea5e9";
 const ACCENT = "#10b981";
 const LIGHT = "#f3f4f6";
@@ -202,8 +190,8 @@ const DARK = "#111827";
 
 /** Respaldo interno (USD/t de metal fino) */
 const FALLBACK_COMMODITY_PRICE_USD: Record<string, number> = {
-  Oro: 70000000,
-  Plata: 800000,
+  Oro: 70000000, // oro a USD/t (aprox 70M, ~70k USD/kg)
+  Plata: 800000, // plata a USD/t (~800 USD/kg)
   Cobre: 9000,
   Aluminio: 2300,
   Zinc: 2600,
@@ -212,16 +200,7 @@ const FALLBACK_COMMODITY_PRICE_USD: Record<string, number> = {
   Níquel: 17000,
 };
 
-const COMMERCIAL_ORDER = [
-  "Oro",
-  "Plata",
-  "Cobre",
-  "Aluminio",
-  "Zinc",
-  "Plomo",
-  "Estaño",
-  "Níquel",
-];
+const COMMERCIAL_ORDER = ["Oro", "Plata", "Cobre", "Aluminio", "Zinc", "Plomo", "Estaño", "Níquel"];
 
 type CommodityPrices = {
   prices: Record<string, number>;
@@ -231,35 +210,19 @@ type CommodityPrices = {
 
 async function getCommodityPrices(): Promise<CommodityPrices> {
   try {
-    const r = await fetch("/api/commodity-prices?currency=USD", { cache: "no-store" });
-
-    // 1) Si la respuesta no es 2xx => usar fallback
+    // Puedes pedir por commodities específicos: /api/commodity-prices?commodities=Cobre,Zinc,Plomo
+    const r = await fetch(`/api/commodity-prices?currency=USD`, { cache: "no-store" });
     if (!r.ok) throw new Error(`status ${r.status}`);
-
-    // 2) Confirmar que realmente es JSON antes de parsear
     const ct = r.headers.get("content-type") || "";
     const isJson = ct.toLowerCase().includes("application/json");
     if (!isJson) throw new Error(`non-json content-type: ${ct}`);
-
     const j = (await r.json()) as CommodityPrices;
-
-    // 3) Validación mínima de esquema
     if (!j || typeof j !== "object" || typeof j.prices !== "object") {
       throw new Error("bad schema");
     }
     return j;
-  } catch (err) {
-    // Fallback estable si algo falla (red, 5xx, texto en vez de JSON, etc.)
-    return { prices: FALLBACK_COMMODITY_PRICE_USD, currency: "USD", updatedAt: undefined };
-  }
-}
-
-
-function fmtMoney(v: number, currency: CurrencyCode = "USD") {
-  try {
-    return new Intl.NumberFormat("es-PE", { style: "currency", currency }).format(v);
   } catch {
-    return `${currency} ${v.toLocaleString()}`;
+    return { prices: FALLBACK_COMMODITY_PRICE_USD, currency: "USD", updatedAt: undefined };
   }
 }
 
@@ -268,16 +231,13 @@ function fmtMoney(v: number, currency: CurrencyCode = "USD") {
    ========================================================================= */
 async function aggregateByCommodity(results: MineralResult[]) {
   const map = new Map<string, number>(); // commodity -> % METAL en la mezcla
-
   for (const r of results) {
     const { commodity, factor } = commodityAndFactorFor(r.name);
     if (!commodity || !factor) continue;
-
-    const mineralPct = r.pct || 0;          // % mineral
-    const metalPct = mineralPct * factor;   // % metal equivalente
+    const mineralPct = r.pct || 0; // % mineral
+    const metalPct = mineralPct * factor; // % metal equivalente
     map.set(commodity, (map.get(commodity) || 0) + metalPct);
   }
-
   return Array.from(map.entries())
     .map(([mineral, gradePct]) => ({ mineral, gradePct: +gradePct.toFixed(2) }))
     .sort((a, b) => b.gradePct - a.gradePct);
@@ -412,6 +372,11 @@ export async function buildReportPdf(opts: BuildReportOptions) {
     try {
       doc.addImage(imageDataUrls[i], "JPEG", x, yy, thumbW, thumbH);
     } catch {}
+  }
+  // Avanza 'y' según filas de miniaturas (cierra sección con consistencia)
+  const rowsUsed = Math.ceil(imageDataUrls.length / thumbsPerRow);
+  if (rowsUsed > 0) {
+    y = y + rowsUsed * (thumbH + 24) + 10;
   }
 
   // ===== Resultados por imagen =====
@@ -577,6 +542,7 @@ export async function buildMineralPdf(
 
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const marginX = 48;
+  const pageW = doc.internal.pageSize.getWidth();
   let y = 64;
 
   doc.setFont("helvetica", "bold");
@@ -641,7 +607,7 @@ export async function buildMineralPdf(
 
   doc.setDrawColor(ACCENT);
   doc.setLineWidth(0.8);
-  doc.line(marginX, yAfter, 550, yAfter);
+  doc.line(marginX, yAfter, pageW - marginX, yAfter); // ancho dinámico
   yAfter += 14;
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
@@ -659,6 +625,14 @@ export async function buildMineralPdf(
 /* =========================================================================
    Descarga utilitaria
    ========================================================================= */
+function fmtMoney(v: number, currency: CurrencyCode = "USD") {
+  try {
+    return new Intl.NumberFormat("es-PE", { style: "currency", currency }).format(v);
+  } catch {
+    return `${currency} ${v.toLocaleString()}`;
+  }
+}
+
 export function downloadPdf(bytes: Uint8Array, filename: string) {
   const blob = new Blob([bytes], { type: "application/pdf" });
   const url = URL.createObjectURL(blob);
