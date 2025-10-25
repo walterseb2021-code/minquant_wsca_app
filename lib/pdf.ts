@@ -232,14 +232,28 @@ type CommodityPrices = {
 async function getCommodityPrices(): Promise<CommodityPrices> {
   try {
     const r = await fetch("/api/commodity-prices?currency=USD", { cache: "no-store" });
-    if (!r.ok) throw new Error(String(r.status));
+
+    // 1) Si la respuesta no es 2xx => usar fallback
+    if (!r.ok) throw new Error(`status ${r.status}`);
+
+    // 2) Confirmar que realmente es JSON antes de parsear
+    const ct = r.headers.get("content-type") || "";
+    const isJson = ct.toLowerCase().includes("application/json");
+    if (!isJson) throw new Error(`non-json content-type: ${ct}`);
+
     const j = (await r.json()) as CommodityPrices;
-    if (!j?.prices || typeof j.prices !== "object") throw new Error("bad schema");
+
+    // 3) Validación mínima de esquema
+    if (!j || typeof j !== "object" || typeof j.prices !== "object") {
+      throw new Error("bad schema");
+    }
     return j;
-  } catch {
+  } catch (err) {
+    // Fallback estable si algo falla (red, 5xx, texto en vez de JSON, etc.)
     return { prices: FALLBACK_COMMODITY_PRICE_USD, currency: "USD", updatedAt: undefined };
   }
 }
+
 
 function fmtMoney(v: number, currency: CurrencyCode = "USD") {
   try {
