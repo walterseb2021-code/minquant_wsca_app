@@ -11,10 +11,10 @@ import {
   downloadPdf,
   type MineralResult,
   type CurrencyCode,
-  type CommodityAdjustments, // ← NUEVO
+  type CommodityAdjustments,
 } from "../../lib/pdf";
 
-/* Convierte File -> dataURL para insertar fotos en el PDF general */
+/* File -> dataURL para PDF */
 async function fileToDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const fr = new FileReader();
@@ -22,6 +22,26 @@ async function fileToDataURL(file: File): Promise<string> {
     fr.onerror = reject;
     fr.readAsDataURL(file);
   });
+}
+
+/* === NUEVO: redimensionar/comprimir imagen antes de subir === */
+async function resizeImageFile(file: File, maxWH = 1280, quality = 0.7): Promise<Blob> {
+  const bitmap = await createImageBitmap(file);
+  const { width, height } = bitmap;
+  const scale = Math.min(1, maxWH / Math.max(width, height));
+  const dstW = Math.max(1, Math.round(width * scale));
+  const dstH = Math.max(1, Math.round(height * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = dstW;
+  canvas.height = dstH;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(bitmap, 0, 0, dstW, dstH);
+  const blob: Blob = await new Promise((resolve) =>
+    canvas.toBlob((b) => resolve(b || file), "image/jpeg", quality)
+  );
+  bitmap.close?.();
+  return blob;
 }
 
 /* Respuesta de /api/mineral-info */
@@ -63,13 +83,12 @@ export default function AnalisisPage() {
   const [sampleCode, setSampleCode] = React.useState("MQ-0001");
   const [currency, setCurrency] = React.useState<CurrencyCode>("USD");
 
-  // ==== NUEVO: overrides por commodity (Cu/Zn/Pb) ====
+  // Overrides por commodity (Cu/Zn/Pb)
   const [adj, setAdj] = React.useState<CommodityAdjustments>({
     Cobre: { recovery: 0.88, payable: 0.96 },
     Zinc: { recovery: 0.85, payable: 0.85 },
     Plomo: { recovery: 0.90, payable: 0.90 },
   });
-
   const setNum = (metal: "Cobre" | "Zinc" | "Plomo", field: "recovery" | "payable", val: string) => {
     const pct = Math.max(0, Math.min(100, Number(val)));
     setAdj((prev) => ({
@@ -93,7 +112,7 @@ export default function AnalisisPage() {
   const [modalInfo, setModalInfo] = React.useState<MineralInfoWeb | null>(null);
   const [loadingInfo, setLoadingInfo] = React.useState(false);
 
-  // Fotos -> dataURLs
+  // Fotos -> dataURLs para PDF
   const handlePhotos = React.useCallback(async (arr: CapturedPhoto[]) => {
     setPhotos(arr);
     const dataurls = await Promise.all(arr.map((p) => fileToDataURL(p.file)));
@@ -103,7 +122,7 @@ export default function AnalisisPage() {
   // Ubicación
   const handleGeo = React.useCallback((g: GeoResult) => setGeo(g), []);
 
-  // ===== Análisis con Gemini =====
+  // ===== Análisis (/api/analyze) con envío comprimido =====
   async function handleAnalyze() {
     if (!photos.length) {
       alert("Primero toma o sube al menos una foto.");
@@ -112,13 +131,21 @@ export default function AnalisisPage() {
     setBusyAnalyze(true);
     try {
       const form = new FormData();
-      photos.forEach((p) => form.append("images", p.file, p.file.name || "foto.jpg"));
+
+      // Limitar a 6 fotos y comprimir cada una
+      const MAX = 6;
+      const subset = photos.slice(0, MAX);
+      for (const p of subset) {
+        const blob = await resizeImageFile(p.file, 1280, 0.7);
+        const name = (p.file.name || "foto.jpg").replace(/\.(png|jpg|jpeg|webp)$/i, "") + "_cmp.jpg";
+        form.append("images", new File([blob], name, { type: "image/jpeg" }));
+      }
 
       const r = await fetch("/api/analyze", { method: "POST", body: form });
       const ct = (r.headers.get("content-type") || "").toLowerCase();
       if (!ct.includes("application/json")) {
         const txt = await r.text();
-        throw new Error(`El servidor no devolvió JSON (${r.status}). Resumen: ${txt.slice(0, 120)}`);
+        throw new Error(`El servidor no devolvió JSON (${r.status}). Resumen: ${txt.slice(0, 160)}`);
       }
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "Error analizando");
@@ -126,6 +153,7 @@ export default function AnalisisPage() {
       const perFromApi = (j?.perImage ?? []) as { fileName: string; results: MineralResult[] }[];
       setPerImage(perFromApi);
 
+      // Global promedio simple normalizado a 100
       const totals = new Map<string, number>();
       const counts = new Map<string, number>();
       perFromApi.forEach((img) => {
@@ -179,9 +207,7 @@ export default function AnalisisPage() {
             }
           : undefined,
         embedStaticMap: true,
-
-        // ↓↓↓ NUEVO: enviar overrides al PDF ↓↓↓
-        recoveryPayables: adj,
+        recoveryPayables: adj, // ← pasa overrides al PDF
       });
       const buffer = doc.output("arraybuffer");
       downloadPdf(new Uint8Array(buffer), `Reporte_${sampleCode}.pdf`);
@@ -196,7 +222,7 @@ export default function AnalisisPage() {
     }
   }
 
-  // ===== Abrir ficha (consulta a la web) =====
+  // ===== Ficha =====
   async function openMineral(m: MineralResult) {
     setModalMineral(m);
     setModalOpen(true);
@@ -219,7 +245,6 @@ export default function AnalisisPage() {
     }
   }
 
-  // ===== PDF de la ficha =====
   async function exportMineralPdf() {
     if (!modalMineral) return;
     setBusyMineralPdf(true);
@@ -246,9 +271,7 @@ export default function AnalisisPage() {
   const canAnalyze = photos.length > 0;
   const resultsReady = globalResults.length > 0;
 
-  function fmt(v?: string | number | null) {
-    return v == null || v === "" ? "—" : String(v);
-  }
+  const fmt = (v?: string | number | null) => (v == null || v === "" ? "—" : String(v));
 
   return (
     <main className="min-h-screen">
@@ -286,7 +309,7 @@ export default function AnalisisPage() {
             </div>
           </div>
 
-          {/* ==== NUEVO: Panel de ajustes por commodity ==== */}
+          {/* Panel Rec./Pay. */}
           <div className="mb-4 border rounded-lg p-3 bg-gray-50">
             <div className="font-semibold mb-2">Recuperación y Payable por commodity</div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -321,7 +344,7 @@ export default function AnalisisPage() {
               ))}
             </div>
             <p className="text-[12px] text-gray-600 mt-2">
-              Si un metal no está en esta lista, se usa el valor global por defecto (Rec. 85% • Pay. 96%).
+              Si un metal no está en esta lista, se usan valores por defecto (Rec. 85% • Pay. 96%).
             </p>
           </div>
 
@@ -446,12 +469,7 @@ export default function AnalisisPage() {
           <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl">
             <div className="px-4 py-3 border-b flex items-center justify-between">
               <h4 className="font-semibold">{modalInfo?.nombre || modalMineral?.name || "Ficha técnica"}</h4>
-              <button
-                onClick={() => setModalOpen(false)}
-                className="px-2 py-1 rounded bg-gray-200 hover:bg-gray-300"
-              >
-                Cerrar
-              </button>
+              <button onClick={() => setModalOpen(false)} className="px-2 py-1 rounded bg-gray-200 hover:bg-gray-300">Cerrar</button>
             </div>
 
             <div className="p-5 text-sm">
