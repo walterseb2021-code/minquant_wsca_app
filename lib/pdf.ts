@@ -1,6 +1,5 @@
 // @ts-nocheck
 // lib/pdf.ts — PDFs para MinQuant_WSCA (portada + mapa, tablas, ficha y análisis económico realista)
-
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { getMineralInfo } from "./minerals";
@@ -8,17 +7,29 @@ import { getMineralInfo } from "./minerals";
 export type MineralResult = { name: string; pct: number; confidence?: number };
 export type CurrencyCode = "USD" | "PEN" | "EUR";
 
-// ==== NUEVO: ajustes por commodity ====
+/* =========================================================================
+   NUEVO: overrides de recuperación/payable por commodity
+   ========================================================================= */
 export type CommodityAdjustments = Record<
-  string, // "Cobre" | "Zinc" | "Plomo" | ...
-  { recovery: number; payable: number } // valores 0..1
+  string,
+  { recovery: number; payable: number } // fracciones (0..1)
 >;
 
 /* =========================================================================
-   CONFIG ECONÓMICA (defaults globales si no hay override por commodity)
+   CONFIG ECONÓMICA (defaults globales/fallback)
    ========================================================================= */
-const RECOVERY_DEFAULT = 0.85;
-const PAYABLE_DEFAULT = 0.96;
+// Recuperación y Payable por defecto (si no hay override)
+const DEFAULT_REC = 0.85;
+const DEFAULT_PAY = 0.96;
+
+// Defaults específicos por commodity si no vienen overrides desde UI
+const DEFAULTS_BY_COMMODITY: Record<string, { recovery: number; payable: number }> = {
+  Cobre: { recovery: 0.88, payable: 0.96 },
+  Zinc: { recovery: 0.85, payable: 0.85 },
+  Plomo: { recovery: 0.90, payable: 0.90 },
+  Oro: { recovery: 0.90, payable: 0.99 },
+  Plata: { recovery: 0.85, payable: 0.98 },
+};
 
 /* =========================================================================
    HELPERS GENERALES
@@ -32,6 +43,7 @@ async function blobToDataURL(b: Blob): Promise<string> {
   });
 }
 
+// Proxy a nuestro endpoint de mapa estático OSM -> dataURL (PNG)
 async function fetchStaticMapDataUrl(lat: number, lng: number, zoom = 14, size = "900x380") {
   const url = `/api/staticmap?lat=${lat}&lng=${lng}&zoom=${zoom}&size=${size}`;
   const FALLBACK_DATAURL =
@@ -67,22 +79,14 @@ function normalizeTo100(results: MineralResult[]): MineralResult[] {
 
 function titleCase(s: string) {
   if (!s) return s;
-  return s
-    .toLowerCase()
-    .replace(/\b\w/g, (c) => c.toUpperCase())
-    .replace(/\s+/g, " ")
-    .trim();
+  return s.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()).replace(/\s+/g, " ").trim();
 }
 
 /* =========================================================================
    MAPEO A COMMODITY + FACTORES ESTEQUIOMÉTRICOS (metal en mineral)
    ========================================================================= */
 function _norm(s: string) {
-  return (s || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim();
+  return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 }
 
 function normalizeCommodityName(raw?: string | null): string | null {
@@ -135,28 +139,22 @@ const METAL_FACTOR: Record<string, { commodity: string; factor: number }> = {
   Calcocita: { commodity: "Cobre", factor: 0.798 },
   Chalcocite: { commodity: "Cobre", factor: 0.798 },
   Bornita: { commodity: "Cobre", factor: 0.633 },
-
   // Zinc
   Esfalerita: { commodity: "Zinc", factor: 0.671 },
   Sphalerite: { commodity: "Zinc", factor: 0.671 },
-
   // Plomo
   Galena: { commodity: "Plomo", factor: 0.866 },
-
   // Estaño
   Casiterita: { commodity: "Estaño", factor: 0.788 },
   Cassiterite: { commodity: "Estaño", factor: 0.788 },
-
   // Níquel
   Pentlandita: { commodity: "Níquel", factor: 0.33 },
   Pentlandite: { commodity: "Níquel", factor: 0.33 },
-
-  // Aluminio (alúmina/bauxita)
+  // Aluminio
   Bauxita: { commodity: "Aluminio", factor: 0.53 },
   Bauxite: { commodity: "Aluminio", factor: 0.53 },
   Alúmina: { commodity: "Aluminio", factor: 0.53 },
   Alumina: { commodity: "Aluminio", factor: 0.53 },
-
   // Hierro
   Hematita: { commodity: "Hierro", factor: 0.699 },
   Hematite: { commodity: "Hierro", factor: 0.699 },
@@ -164,8 +162,6 @@ const METAL_FACTOR: Record<string, { commodity: string; factor: number }> = {
   Magnetite: { commodity: "Hierro", factor: 0.724 },
   Goethita: { commodity: "Hierro", factor: 0.629 },
   Goethite: { commodity: "Hierro", factor: 0.629 },
-
-  // Limonita (aprox.)
   Limonita: { commodity: "Hierro", factor: 0.5 },
   Limonite: { commodity: "Hierro", factor: 0.5 },
 };
@@ -196,29 +192,30 @@ const FALLBACK_COMMODITY_PRICE_USD: Record<string, number> = {
   Estaño: 25000,
   Níquel: 17000,
 };
-
 const COMMERCIAL_ORDER = ["Oro", "Plata", "Cobre", "Aluminio", "Zinc", "Plomo", "Estaño", "Níquel"];
 
-type CommodityPrices = {
-  prices: Record<string, number>;
-  currency: CurrencyCode;
-  updatedAt?: string;
-};
+type CommodityPrices = { prices: Record<string, number>; currency: CurrencyCode; updatedAt?: string };
 
 async function getCommodityPrices(): Promise<CommodityPrices> {
   try {
-    const r = await fetch(`/api/commodity-prices?currency=USD`, { cache: "no-store" });
+    const r = await fetch("/api/commodity-prices?currency=USD", { cache: "no-store" });
     if (!r.ok) throw new Error(`status ${r.status}`);
     const ct = r.headers.get("content-type") || "";
     const isJson = ct.toLowerCase().includes("application/json");
     if (!isJson) throw new Error(`non-json content-type: ${ct}`);
     const j = (await r.json()) as CommodityPrices;
-    if (!j || typeof j !== "object" || typeof j.prices !== "object") {
-      throw new Error("bad schema");
-    }
+    if (!j || typeof j !== "object" || typeof j.prices !== "object") throw new Error("bad schema");
     return j;
   } catch {
     return { prices: FALLBACK_COMMODITY_PRICE_USD, currency: "USD", updatedAt: undefined };
+  }
+}
+
+function fmtMoney(v: number, currency: CurrencyCode = "USD") {
+  try {
+    return new Intl.NumberFormat("es-PE", { style: "currency", currency }).format(v);
+  } catch {
+    return `${currency} ${v.toLocaleString()}`;
   }
 }
 
@@ -226,11 +223,12 @@ async function getCommodityPrices(): Promise<CommodityPrices> {
    AGREGACIÓN POR COMMODITY (sumando % DE METAL, no de mineral)
    ========================================================================= */
 async function aggregateByCommodity(results: MineralResult[]) {
-  const map = new Map<string, number>();
+  const map = new Map<string, number>(); // commodity -> % METAL
   for (const r of results) {
     const { commodity, factor } = commodityAndFactorFor(r.name);
     if (!commodity || !factor) continue;
-    const metalPct = (r.pct || 0) * factor; // % metal equivalente
+    const mineralPct = r.pct || 0;
+    const metalPct = mineralPct * factor;
     map.set(commodity, (map.get(commodity) || 0) + metalPct);
   }
   return Array.from(map.entries())
@@ -251,9 +249,7 @@ type BuildReportOptions = {
   location?: { lat: number; lng: number; accuracy?: number; address?: string };
   embedStaticMap?: boolean;
   currency?: CurrencyCode;
-
-  // ==== NUEVO: overrides por commodity ====
-  recoveryPayables?: CommodityAdjustments; // p. ej. { Cobre:{recovery:0.88,payable:0.96}, Zinc:{...}, Plomo:{...} }
+  recoveryPayables?: CommodityAdjustments; // NUEVO
 };
 
 export async function buildReportPdf(opts: BuildReportOptions) {
@@ -267,16 +263,8 @@ export async function buildReportPdf(opts: BuildReportOptions) {
     location,
     embedStaticMap,
     currency = "USD",
-    recoveryPayables, // NUEVO
+    recoveryPayables = {},
   } = opts;
-
-  // helper: obtener (rec, pay) para un commodity con fallback global
-  const getAdj = (commodity: string) => {
-    const adj = recoveryPayables?.[commodity];
-    const rec = typeof adj?.recovery === "number" ? adj!.recovery : RECOVERY_DEFAULT;
-    const pay = typeof adj?.payable === "number" ? adj!.payable : PAYABLE_DEFAULT;
-    return { rec, pay };
-  };
 
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const pageW = doc.internal.pageSize.getWidth();
@@ -334,7 +322,7 @@ export async function buildReportPdf(opts: BuildReportOptions) {
     y += 8;
   }
 
-  // ===== Global =====
+  // ===== Global (normalizado a 100%) =====
   doc.setFont("helvetica", "bold");
   doc.setTextColor(ACCENT);
   doc.setFontSize(12);
@@ -380,10 +368,6 @@ export async function buildReportPdf(opts: BuildReportOptions) {
       doc.addImage(imageDataUrls[i], "JPEG", x, yy, thumbW, thumbH);
     } catch {}
   }
-  const rowsUsed = Math.ceil(imageDataUrls.length / thumbsPerRow);
-  if (rowsUsed > 0) {
-    y = y + rowsUsed * (thumbH + 24) + 10;
-  }
 
   // ===== Resultados por imagen =====
   doc.addPage();
@@ -419,25 +403,42 @@ export async function buildReportPdf(opts: BuildReportOptions) {
     }
   });
 
-  // ===== Página económica (con overrides por commodity) =====
+  // ===== Página económica: Top commodities (con LEY DE METAL) =====
   try {
     const globalNorm = normalizeTo100(results).map((r) => ({ ...r, name: r.name.trim() }));
     const commodityArr = await aggregateByCommodity(globalNorm); // gradePct = % METAL
     const market = await getCommodityPrices();
 
-    const econRows = commodityArr
+    // Orden comercial útil y filtro por precio
+    const sorted = commodityArr.sort((a, b) => {
+      const ia = COMMERCIAL_ORDER.indexOf(a.mineral);
+      const ib = COMMERCIAL_ORDER.indexOf(b.mineral);
+      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+    });
+
+    const econRows = sorted
       .filter((r) => market.prices[r.mineral] != null && r.gradePct > 0)
-      .slice(0, 8)
       .map((r) => {
-        const price = market.prices[r.mineral];
-        const { rec, pay } = getAdj(r.mineral);
-        const net = (r.gradePct / 100) * price * rec * pay;
+        const price = market.prices[r.mineral]; // USD/t de metal
+        // Obtener rec/pay por commodity (override UI > default por commodity > default global)
+        const fromUI = recoveryPayables[r.mineral];
+        const defByCom = DEFAULTS_BY_COMMODITY[r.mineral];
+        const rec = Math.max(
+          0,
+          Math.min(1, fromUI?.recovery ?? defByCom?.recovery ?? DEFAULT_REC),
+        );
+        const pay = Math.max(
+          0,
+          Math.min(1, fromUI?.payable ?? defByCom?.payable ?? DEFAULT_PAY),
+        );
+
+        const net = (r.gradePct / 100) * price * rec * pay; // Valor por tonelada de mineral
         return {
           mineral: r.mineral,
-          gradePct: r.gradePct,
+          gradePct: r.gradePct, // % METAL
+          rec,
+          pay,
           price,
-          recovery: rec,
-          payable: pay,
           estValue: +net.toFixed(2),
         };
       });
@@ -457,21 +458,21 @@ export async function buildReportPdf(opts: BuildReportOptions) {
       doc.setFontSize(10);
       const srcNote = market.updatedAt
         ? `Fuente precios: /api/commodity-prices (actualizado: ${new Date(
-            market.updatedAt
+            market.updatedAt,
           ).toLocaleString()})`
         : "Precios referenciales internos (fallback).";
       doc.text(
-        `${srcNote} — Valor = Precio × (Ley metal/100) × Recuperación × Payable.`,
+        `${srcNote} — Valor = Precio × (Ley metal/100) × Recuperación × Payable (por commodity).`,
         marginX,
-        yE
+        yE,
       );
       yE += 8;
 
       const econBody = econRows.map((r) => [
         r.mineral,
-        r.gradePct.toFixed(2),
-        `${Math.round(r.recovery * 100)}%`,
-        `${Math.round(r.payable * 100)}%`,
+        r.gradePct.toFixed(2), // Ley de METAL %
+        `${Math.round(r.rec * 100)}%`,
+        `${Math.round(r.pay * 100)}%`,
         fmtMoney(r.price, market.currency),
         fmtMoney(r.estValue, market.currency),
       ]);
@@ -495,17 +496,37 @@ export async function buildReportPdf(opts: BuildReportOptions) {
       });
 
       yE = ((doc as any).lastAutoTable?.finalY || yE) + 14;
-      const totalUSDPerTonne = econRows.reduce((a, r) => a + (r.estValue || 0), 0);
+      const totalPerTonne = econRows.reduce((a, r) => a + (r.estValue || 0), 0);
 
       doc.setFont("helvetica", "bold");
       doc.setTextColor(ACCENT);
       doc.setFontSize(12);
       doc.text(
-        `Total estimado (${market.currency}/t): ${fmtMoney(totalUSDPerTonne, market.currency)}`,
+        `Total estimado (${market.currency}/t): ${fmtMoney(totalPerTonne, market.currency)}`,
         marginX,
-        yE
+        yE,
       );
       yE += 16;
+
+      const v = totalPerTonne;
+      const nivel = v >= 100 ? "Alta" : v >= 30 ? "Media" : "Baja";
+      const texto =
+        nivel === "Alta"
+          ? "Recomendado avanzar a muestreo representativo, QA/QC y pruebas metalúrgicas."
+          : nivel === "Media"
+          ? "Continuar con exploración dirigida y validar recuperación metalúrgica."
+          : "No recomendable por ahora; priorizar prospección adicional y revisar costos.";
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(DARK);
+      doc.setFontSize(12);
+      doc.text(`Viabilidad: ${nivel}`, marginX, yE);
+      yE += 14;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.text(`Conclusión y recomendaciones: ${texto}`, marginX, yE, {
+        maxWidth: pageW - marginX * 2,
+      });
     }
   } catch {}
 
@@ -513,12 +534,12 @@ export async function buildReportPdf(opts: BuildReportOptions) {
 }
 
 /* =========================================================================
-   PDF FICHA (igual que antes)
+   PDF FICHA TÉCNICA POR MINERAL
    ========================================================================= */
 type BuildMineralPdfOptions = {
   mineralName: string;
-  samplePct?: number;
-  price?: number;
+  samplePct?: number; // % en la mezcla mineral
+  price?: number; // precio por tonelada (misma moneda)
   currency?: CurrencyCode;
   notes?: string;
   infoOverride?: any;
@@ -531,7 +552,6 @@ export async function buildMineralPdf(opts: BuildMineralPdfOptions): Promise<Uin
 
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const marginX = 48;
-  const pageW = doc.internal.pageSize.getWidth();
   let y = 64;
 
   doc.setFont("helvetica", "bold");
@@ -595,7 +615,7 @@ export async function buildMineralPdf(opts: BuildMineralPdfOptions): Promise<Uin
 
   doc.setDrawColor(ACCENT);
   doc.setLineWidth(0.8);
-  doc.line(marginX, yAfter, pageW - marginX, yAfter);
+  doc.line(marginX, yAfter, 550, yAfter);
   yAfter += 14;
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
@@ -603,7 +623,7 @@ export async function buildMineralPdf(opts: BuildMineralPdfOptions): Promise<Uin
   doc.text(
     "Documento informativo. La confirmación mineralógica requiere prueba de laboratorio.",
     marginX,
-    yAfter
+    yAfter,
   );
 
   const arr = doc.output("arraybuffer");
@@ -611,16 +631,8 @@ export async function buildMineralPdf(opts: BuildMineralPdfOptions): Promise<Uin
 }
 
 /* =========================================================================
-   Utilidades
+   Descarga utilitaria
    ========================================================================= */
-function fmtMoney(v: number, currency: CurrencyCode = "USD") {
-  try {
-    return new Intl.NumberFormat("es-PE", { style: "currency", currency }).format(v);
-  } catch {
-    return `${currency} ${v.toLocaleString()}`;
-  }
-}
-
 export function downloadPdf(bytes: Uint8Array, filename: string) {
   const blob = new Blob([bytes], { type: "application/pdf" });
   const url = URL.createObjectURL(blob);

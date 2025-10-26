@@ -64,13 +64,19 @@ export default function AnalisisPage() {
   const [sampleCode, setSampleCode] = React.useState("MQ-0001");
   const [currency, setCurrency] = React.useState<CurrencyCode>("USD");
 
-  // Overrides por commodity (Cu/Zn/Pb)
+  // Overrides por commodity (incluye Au y Ag ahora)
   const [adj, setAdj] = React.useState<CommodityAdjustments>({
     Cobre: { recovery: 0.88, payable: 0.96 },
     Zinc: { recovery: 0.85, payable: 0.85 },
     Plomo: { recovery: 0.90, payable: 0.90 },
+    Oro: { recovery: 0.90, payable: 0.99 },
+    Plata: { recovery: 0.85, payable: 0.98 },
   });
-  const setNum = (metal: "Cobre" | "Zinc" | "Plomo", field: "recovery" | "payable", val: string) => {
+  const setNum = (
+    metal: "Cobre" | "Zinc" | "Plomo" | "Oro" | "Plata",
+    field: "recovery" | "payable",
+    val: string
+  ) => {
     const pct = Math.max(0, Math.min(100, Number(val)));
     setAdj((prev) => ({
       ...prev,
@@ -165,31 +171,33 @@ export default function AnalisisPage() {
     if (!globalResults.length || !perImage.length) { alert("Primero realiza el análisis."); return; }
     setBusyGeneralPdf(true);
     try {
-// Sombra de seguridad ✅
-const safeAdj: CommodityAdjustments = {
-  Cobre: { recovery: adj?.Cobre?.recovery ?? 0.85, payable: adj?.Cobre?.payable ?? 0.96 },
-  Zinc: {  recovery: adj?.Zinc?.recovery  ?? 0.85, payable: adj?.Zinc?.payable  ?? 0.96 },
-  Plomo: { recovery: adj?.Plomo?.recovery ?? 0.90, payable: adj?.Plomo?.payable ?? 0.90 },
-};
+      // Sombra de seguridad: garantiza valores en móvil
+      const safeAdj: CommodityAdjustments = {
+        Cobre: { recovery: adj?.Cobre?.recovery ?? 0.88, payable: adj?.Cobre?.payable ?? 0.96 },
+        Zinc:  { recovery: adj?.Zinc?.recovery  ?? 0.85, payable: adj?.Zinc?.payable  ?? 0.85 },
+        Plomo: { recovery: adj?.Plomo?.recovery ?? 0.90, payable: adj?.Plomo?.payable ?? 0.90 },
+        Oro:   { recovery: adj?.Oro?.recovery   ?? 0.90, payable: adj?.Oro?.payable   ?? 0.99 },
+        Plata: { recovery: adj?.Plata?.recovery ?? 0.85, payable: adj?.Plata?.payable ?? 0.98 },
+      };
 
-const doc = await buildReportPdf({
-  appName: "MinQuant_WSCA",
-  sampleCode,
-  results: globalResults,
-  perImage,
-  imageDataUrls: imagesDataURL,
-  generatedAt: new Date().toISOString(),
-  location: geo?.point
-    ? {
-        lat: geo.point.lat,
-        lng: geo.point.lng,
-        accuracy: geo.point.accuracy,
-        address: geo.address?.formatted,
-      }
-    : undefined,
-  embedStaticMap: true,
-  recoveryPayables: safeAdj,  // ✅ garantizado para móviles
-});
+      const doc = await buildReportPdf({
+        appName: "MinQuant_WSCA",
+        sampleCode,
+        results: globalResults,
+        perImage,
+        imageDataUrls: imagesDataURL,
+        generatedAt: new Date().toISOString(),
+        location: geo?.point
+          ? {
+              lat: geo.point.lat,
+              lng: geo.point.lng,
+              accuracy: geo.point.accuracy,
+              address: geo.address?.formatted,
+            }
+          : undefined,
+        embedStaticMap: true,
+        recoveryPayables: safeAdj,  // por commodity (incluye Au/Ag)
+      });
 
       const buffer = doc.output("arraybuffer");
       downloadPdf(new Uint8Array(buffer), `Reporte_${sampleCode}.pdf`);
@@ -249,6 +257,8 @@ const doc = await buildReportPdf({
     }
   }
 
+  const METALS_PANEL: Array<"Cobre" | "Zinc" | "Plomo" | "Oro" | "Plata"> = ["Cobre", "Zinc", "Plomo", "Oro", "Plata"];
+
   return (
     <main className="min-h-screen">
       <header className="w-full py-3 px-5 bg-gradient-to-r from-cyan-600 to-emerald-600 text-white">
@@ -276,31 +286,37 @@ const doc = await buildReportPdf({
             </div>
           </div>
 
-          {/* Panel Rec./Pay. */}
+          {/* Panel Rec./Pay. (incluye Oro y Plata) */}
           <div className="mb-4 border rounded-lg p-3 bg-gray-50">
             <div className="font-semibold mb-2">Recuperación y Payable por commodity</div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              {(["Cobre", "Zinc", "Plomo"] as const).map((metal) => (
+            <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
+              {METALS_PANEL.map((metal) => (
                 <div key={metal} className="border rounded p-2 bg-white">
                   <div className="text-sm font-medium mb-1">{metal}</div>
                   <div className="flex items-center gap-2 text-sm">
                     <label className="w-16">Rec. %</label>
-                    <input type="number" min={0} max={100} step="1"
+                    <input
+                      type="number" min={0} max={100} step="1"
                       value={Math.round((adj[metal]?.recovery ?? 0) * 100)}
                       onChange={(e) => setNum(metal, "recovery", e.target.value)}
-                      className="border rounded px-2 py-1 w-20" />
+                      className="border rounded px-2 py-1 w-20"
+                    />
                   </div>
                   <div className="flex items-center gap-2 text-sm mt-2">
                     <label className="w-16">Pay. %</label>
-                    <input type="number" min={0} max={100} step="1"
+                    <input
+                      type="number" min={0} max={100} step="1"
                       value={Math.round((adj[metal]?.payable ?? 0) * 100)}
                       onChange={(e) => setNum(metal, "payable", e.target.value)}
-                      className="border rounded px-2 py-1 w-20" />
+                      className="border rounded px-2 py-1 w-20"
+                    />
                   </div>
                 </div>
               ))}
             </div>
-            <p className="text-[12px] text-gray-600 mt-2">Si un metal no está en esta lista, se usan valores por defecto (Rec. 85% • Pay. 96%).</p>
+            <p className="text-[12px] text-gray-600 mt-2">
+              Si un metal no está en esta lista, se usan valores por defecto (Rec. 85% • Pay. 96%).
+            </p>
           </div>
 
           <div className="mb-3">
@@ -330,14 +346,20 @@ const doc = await buildReportPdf({
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <button onClick={handleAnalyze} disabled={!canAnalyze || busyAnalyze}
+            <button
+              onClick={handleAnalyze}
+              disabled={!canAnalyze || busyAnalyze}
               className="px-4 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
-              title={extra > 0 ? `Se enviarán ${willSend} de ${photos.length} fotos` : undefined}>
+              title={extra > 0 ? `Se enviarán ${willSend} de ${photos.length} fotos` : undefined}
+            >
               {busyAnalyze ? "Analizando…" : extra > 0 ? `Analizar (${willSend}/${photos.length})` : "Analizar"}
             </button>
 
-            <button onClick={handleExportGeneralPdf} disabled={!resultsReady || busyGeneralPdf}
-              className="px-4 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
+            <button
+              onClick={handleExportGeneralPdf}
+              disabled={!resultsReady || busyGeneralPdf}
+              className="px-4 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
               {busyGeneralPdf ? "Generando PDF…" : "Generar PDF general"}
             </button>
           </div>
@@ -404,14 +426,14 @@ const doc = await buildReportPdf({
                 ))}
               </div>
 
-              {/* Panel: Imágenes excluidas por baja confianza / consenso / errores */}
+              {/* Panel: Imágenes excluidas */}
               {excluded.length > 0 && (
                 <div className="border rounded-xl p-3 bg-yellow-50">
                   <h4 className="font-semibold mb-2 text-yellow-900">Imágenes excluidas / baja confianza</h4>
                   <ul className="list-disc ml-5 text-sm text-yellow-900">
                     {excluded.map((e, i) => (
                       <li key={i}>
-                        <b>{e.fileName}</b>: {prettyReason(e.reason)}
+                        <b>{e.fileName}</b>: {e.reason}
                       </li>
                     ))}
                   </ul>
