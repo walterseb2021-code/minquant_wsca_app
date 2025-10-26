@@ -165,19 +165,32 @@ export default function AnalisisPage() {
     if (!globalResults.length || !perImage.length) { alert("Primero realiza el análisis."); return; }
     setBusyGeneralPdf(true);
     try {
-      const doc = await buildReportPdf({
-        appName: "MinQuant_WSCA",
-        sampleCode,
-        results: globalResults,
-        perImage,
-        imageDataUrls: imagesDataURL,
-        generatedAt: new Date().toISOString(),
-        location: geo?.point
-          ? { lat: geo.point.lat, lng: geo.point.lng, accuracy: geo.point.accuracy, address: geo.address?.formatted }
-          : undefined,
-        embedStaticMap: true,
-        recoveryPayables: adj,
-      });
+// Sombra de seguridad ✅
+const safeAdj: CommodityAdjustments = {
+  Cobre: { recovery: adj?.Cobre?.recovery ?? 0.85, payable: adj?.Cobre?.payable ?? 0.96 },
+  Zinc: {  recovery: adj?.Zinc?.recovery  ?? 0.85, payable: adj?.Zinc?.payable  ?? 0.96 },
+  Plomo: { recovery: adj?.Plomo?.recovery ?? 0.90, payable: adj?.Plomo?.payable ?? 0.90 },
+};
+
+const doc = await buildReportPdf({
+  appName: "MinQuant_WSCA",
+  sampleCode,
+  results: globalResults,
+  perImage,
+  imageDataUrls: imagesDataURL,
+  generatedAt: new Date().toISOString(),
+  location: geo?.point
+    ? {
+        lat: geo.point.lat,
+        lng: geo.point.lng,
+        accuracy: geo.point.accuracy,
+        address: geo.address?.formatted,
+      }
+    : undefined,
+  embedStaticMap: true,
+  recoveryPayables: safeAdj,  // ✅ garantizado para móviles
+});
+
       const buffer = doc.output("arraybuffer");
       downloadPdf(new Uint8Array(buffer), `Reporte_${sampleCode}.pdf`);
     } catch (e: any) {
