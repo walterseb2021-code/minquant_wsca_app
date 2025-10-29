@@ -13,8 +13,9 @@ import {
   type CommodityAdjustments,
 } from "../../lib/pdf";
 
-import { buildReportPdfPlus } from "../../lib/pdf_plus"; // ✅ NUEVO
+import { buildReportPdfPlus } from "../../lib/pdf_plus"; // PDF general con sección económica e interpretación
 
+/* ===================== Helpers de archivos/imagenes ===================== */
 async function fileToDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const fr = new FileReader();
@@ -44,6 +45,7 @@ async function resizeImageFile(file: File, maxWH = 1280, quality = 0.7): Promise
   return blob;
 }
 
+/* ===================== Tipos y datos ===================== */
 type MineralInfoWeb = {
   nombre: string;
   formula?: string;
@@ -71,34 +73,92 @@ const PRICE_MAP_USD: Record<string, number> = {
   Feldespato: 30.2,
 };
 
+/* ===================== Interpretación en cliente (fallback) ===================== */
+type Interpretation = { geology: string; economics: string; caveats: string };
+
+function buildInterpretationClient(results: MineralResult[]): Interpretation {
+  if (!Array.isArray(results) || results.length === 0) {
+    return {
+      geology: "—",
+      economics: "—",
+      caveats: "• Estimación preliminar • Confirmar con laboratorio (Au/Ag por fuego/AA; Cu/Pb/Zn por ICP/AA).",
+    };
+  }
+
+  const names = results.map(r => r.name.toLowerCase());
+  const has = (s: string) => names.some(n => n.includes(s));
+
+  const gossan = has("limonita") || has("goethita");
+  const cuarzo = has("cuarzo");
+  const cu_sec = has("malaquita") || has("azurita");
+  const cu_sulf = has("calcopirita") || has("bornita") || has("calcocita") || has("calcosina");
+  const pirita = has("pirita");
+  const pbzn = has("galena") || has("esfalerita");
+
+  const geo: string[] = [];
+  if (cu_sec) geo.push("Cobre en zona oxidada (malaquita/azurita) sobre fracturas");
+  if (cu_sulf) geo.push("Sulfuros de cobre (p. ej., calcopirita) en matriz");
+  if (gossan) geo.push("Gossan/óxidos de Fe (limonita/goethita) por meteorización");
+  if (cuarzo) geo.push("Vetas/venillas de cuarzo como hospedante");
+  if (pirita) geo.push("Pirita abundante; posible Au 'invisible' en sulfuros");
+  if (pbzn) geo.push("Firma polimetálica (Pb-Zn) acompañante");
+  if (!geo.length) geo.push("Asociación compatible con ambiente hidrotermal");
+
+  const eco: string[] = [];
+  if (cu_sec || cu_sulf) eco.push("Potencial Cu (especies de cobre presentes)");
+  if ((pirita || cu_sulf) && cuarzo) eco.push("Posible Au/Ag asociado a sulfuros en vetas de cuarzo (no visible a simple vista)");
+  if (pbzn) eco.push("Pb/Zn accesorios podrían adicionar valor");
+  if (!eco.length) eco.push("Sin indicadores claros de metales de alto valor en superficie");
+
+  const adv = [
+    "Estimación visual/IA preliminar",
+    "Validar con ensayo químico (Au/Ag fuego/AA; Cu/Pb/Zn ICP/AA)",
+    "Evitar decisiones económicas sin verificación",
+  ];
+
+  return {
+    geology: "• " + geo.join(" • "),
+    economics: "• " + eco.join(" • "),
+    caveats: "• " + adv.join(" • "),
+  };
+}
+
+/* ===================== Componente principal ===================== */
 export default function AnalisisPage() {
+  // Capturas y ubicación
   const [photos, setPhotos] = React.useState<CapturedPhoto[]>([]);
   const [imagesDataURL, setImagesDataURL] = React.useState<string[]>([]);
   const [geo, setGeo] = React.useState<GeoResult | null>(null);
 
+  // Parámetros
   const [sampleCode, setSampleCode] = React.useState("MQ-0001");
   const [currency, setCurrency] = React.useState<CurrencyCode>("USD");
 
+  // Ajustes de recuperaciones/payables
   const [adj, setAdj] = React.useState<CommodityAdjustments>({
     Cobre: { recovery: 0.88, payable: 0.96 },
     Zinc: { recovery: 0.85, payable: 0.85 },
     Plomo: { recovery: 0.90, payable: 0.90 },
   });
 
+  // Resultados
   const [globalResults, setGlobalResults] = React.useState<MineralResult[]>([]);
   const [perImage, setPerImage] = React.useState<{ fileName: string; results: MineralResult[] }[]>([]);
   const [excluded, setExcluded] = React.useState<{ fileName: string; reason: string }[]>([]);
-  const [interpretation, setInterpretation] = React.useState<{ geology: string; economics: string; caveats: string } | null>(null);
+  const [interpretation, setInterpretation] = React.useState<Interpretation | null>(null);
 
+  // Estados UI
   const [busyAnalyze, setBusyAnalyze] = React.useState(false);
   const [busyGeneralPdf, setBusyGeneralPdf] = React.useState(false);
   const [busyMineralPdf, setBusyMineralPdf] = React.useState(false);
 
+  // Modal ficha
   const [modalOpen, setModalOpen] = React.useState(false);
   const [modalMineral, setModalMineral] = React.useState<MineralResult | null>(null);
   const [modalInfo, setModalInfo] = React.useState<MineralInfoWeb | null>(null);
   const [loadingInfo, setLoadingInfo] = React.useState(false);
 
+  // Handlers de UI
   const setNum = (metal: "Cobre" | "Zinc" | "Plomo", field: "recovery" | "payable", val: string) => {
     const pct = Math.max(0, Math.min(100, Number(val)));
     setAdj((prev) => ({
@@ -115,6 +175,7 @@ export default function AnalisisPage() {
 
   const handleGeo = React.useCallback((g: GeoResult) => setGeo(g), []);
 
+  /* ===================== Analizar (llama /api/analyze) ===================== */
   async function handleAnalyze() {
     if (!photos.length) {
       alert("Primero toma o sube al menos una foto.");
@@ -140,10 +201,13 @@ export default function AnalisisPage() {
       const perFromApi = (j.perImage ?? []) as { fileName: string; results: MineralResult[] }[];
       setPerImage(perFromApi);
       setExcluded(Array.isArray(j?.excluded) ? j.excluded : []);
-      setInterpretation(j?.interpretation ?? null);
-      const results = j.global ?? [];
 
+      const results = (j.global ?? []) as MineralResult[];
       setGlobalResults(results);
+
+      // Si el backend NO envía interpretación, la generamos en cliente
+      const inter: Interpretation | null = j?.interpretation ?? buildInterpretationClient(results);
+      setInterpretation(inter);
     } catch (e: any) {
       console.error("[Analyze] Error:", e);
       alert(e?.message || "Error analizando");
@@ -152,6 +216,7 @@ export default function AnalisisPage() {
     }
   }
 
+  /* ===================== PDF general ===================== */
   async function handleExportGeneralPdf() {
     if (!globalResults.length) {
       alert("Primero realiza el análisis.");
@@ -183,7 +248,7 @@ export default function AnalisisPage() {
           : undefined,
         embedStaticMap: true,
         recoveryPayables: safeAdj,
-        interpretation: interpretation || undefined,
+        interpretation: interpretation || undefined, // ✅ sale en el PDF
         excluded,
       });
 
@@ -191,12 +256,13 @@ export default function AnalisisPage() {
       downloadPdf(new Uint8Array(buffer), `Reporte_${sampleCode}.pdf`);
     } catch (e: any) {
       console.error("[PDF] Error:", e);
-      alert("Error PDF.");
+      alert("Error al generar el PDF.");
     } finally {
       setBusyGeneralPdf(false);
     }
   }
 
+  /* ===================== Ficha individual ===================== */
   async function openMineral(m: MineralResult) {
     setModalMineral(m);
     setModalOpen(true);
@@ -231,12 +297,13 @@ export default function AnalisisPage() {
       });
       downloadPdf(bytes, `Ficha_${name}.pdf`);
     } catch {
-      alert("Error PDF mineral");
+      alert("Error al generar el PDF del mineral.");
     } finally {
       setBusyMineralPdf(false);
     }
   }
 
+  /* ===================== Render ===================== */
   const canAnalyze = photos.length > 0;
   const extra = Math.max(0, photos.length - 6);
   const fmt = (v: any) => (v == null ? "—" : v);
@@ -251,6 +318,7 @@ export default function AnalisisPage() {
       </header>
 
       <section className="max-w-6xl mx-auto px-5 py-5 grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* IZQUIERDA */}
         <div>
           <div className="flex flex-wrap items-end gap-4 mb-4">
             <div>
@@ -331,7 +399,7 @@ export default function AnalisisPage() {
           </button>
         </div>
 
-        {/* RESULTADOS */}
+        {/* DERECHA */}
         <div>
           <h3 className="text-lg font-semibold mb-3">Resultados</h3>
 

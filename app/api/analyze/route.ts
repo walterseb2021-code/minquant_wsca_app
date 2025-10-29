@@ -4,21 +4,15 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/* ===== Tipos ===== */
 type MineralResult = { name: string; pct: number; confidence?: number; evidence?: string };
 type OneImage = { fileName: string; results: MineralResult[] };
-type Excluded = { fileName: string; reason: "timeout" | "parse_error" };
+type Excluded = { fileName: string; reason: "timeout" | "parse_error" | "low_confidence" | "no_consensus" };
 
-/* ===== Opción A (flexible) ===== */
 const TEMPERATURE = 0.2;
-/** Umbrales relajados */
-const CONF_MIN = 0.20;     // antes 0.30
-const PCT_MIN  = 0.50;     // antes 1.0
-
-/** Límites y rendimiento */
-const SERVER_MAX_IMAGES = 6;
-const PER_IMAGE_TIMEOUT_MS = 15_000;
-const CONCURRENCY = 2;
+const CONF_MIN = 0.30;
+const PCT_MIN = 1.0;
+const CONSENSUS_MIN_IMAGES = 2;
+const CONSENSUS_HIGH_CONF = 0.8;
 
 const STATIC_FALLBACKS = [
   "gemini-2.5-flash-preview-05-20",
@@ -34,8 +28,10 @@ const STATIC_FALLBACKS = [
 const MAX_RETRIES = 2;
 const INITIAL_DELAY_MS = 700;
 
-/* ===== Utils ===== */
-const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+const SERVER_MAX_IMAGES = 6;
+const PER_IMAGE_TIMEOUT_MS = 15_000;
+const CONCURRENCY = 2;
+
 const toBase64 = (f: File) => f.arrayBuffer().then(ab => Buffer.from(ab).toString("base64"));
 const cleanName = (raw: string) =>
   String(raw || "")
@@ -43,12 +39,12 @@ const cleanName = (raw: string) =>
     .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9 \-()/]/g, "")
     .replace(/\s+/g, " ")
     .replace(/^./, c => c.toUpperCase());
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 function withTimeout<T>(p: Promise<T>, ms: number, tag = "timeout"): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(tag)), ms);
-    p.then(v => { clearTimeout(t); resolve(v); },
-           e => { clearTimeout(t); reject(e); });
+    p.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
   });
 }
 
@@ -60,7 +56,7 @@ function mergeDuplicates(arr: MineralResult[]): MineralResult[] {
     if (prev) {
       map.set(k, {
         name: prev.name,
-        pct: (prev.pct || 0) + (it.pct || 0),
+        pct: prev.pct + (it.pct || 0),
         confidence: Math.max(prev.confidence ?? 0, it.confidence ?? 0),
         evidence: prev.evidence || it.evidence,
       });
@@ -70,7 +66,6 @@ function mergeDuplicates(arr: MineralResult[]): MineralResult[] {
   }
   return [...map.values()];
 }
-
 function normalizeTo100(results: MineralResult[]): MineralResult[] {
   const sum = results.reduce((a, b) => a + (b.pct || 0), 0);
   if (sum <= 0) return results.map(r => ({ ...r, pct: 0 }));
@@ -79,14 +74,11 @@ function normalizeTo100(results: MineralResult[]): MineralResult[] {
   const tot = +rounded.reduce((a, b) => a + b.pct, 0).toFixed(2);
   const diff = +(100 - tot).toFixed(2);
   if (diff !== 0 && rounded.length) {
-    // Ajuste al mayor para cerrar a 100
-    let i = 0;
-    for (let j = 1; j < rounded.length; j++) if (rounded[j].pct > rounded[i].pct) i = j;
+    let i = 0; for (let j = 1; j < rounded.length; j++) if (rounded[j].pct > rounded[i].pct) i = j;
     rounded[i] = { ...rounded[i], pct: +(rounded[i].pct + diff).toFixed(2) };
   }
   return rounded;
 }
-
 function filterPerImage(list: MineralResult[]): MineralResult[] {
   let r = (list || [])
     .map(it => ({
@@ -98,23 +90,24 @@ function filterPerImage(list: MineralResult[]): MineralResult[] {
     .filter(it => it.name && it.pct >= 0);
 
   r = mergeDuplicates(r);
-
-  // 🔓 Umbral flexible: baja el corte y conserva más señales
   r = r.filter(it => (it.confidence ?? 0) >= CONF_MIN && it.pct >= PCT_MIN);
-
-  // Si quedó vacío, permite 1 candidato “mejor esfuerzo” si existía alguno
-  if (!r.length && list?.length) {
-    const sorted = [...list]
-      .map(x => ({ ...x, name: cleanName(x.name), pct: Number(x.pct ?? 0), confidence: x.confidence ?? 0 }))
-      .sort((a, b) => (b.confidence - a.confidence) || (b.pct - a.pct));
-    const top = sorted[0];
-    if (top && top.name) r = [{ name: top.name, pct: Math.max(top.pct, 5), confidence: top.confidence }];
-  }
-
   r.sort((a, b) => b.pct - a.pct || (b.confidence ?? 0) - (a.confidence ?? 0));
   return normalizeTo100(r);
 }
-
+function consensusAcrossImages(perImage: { results: MineralResult[] }[]): string[] {
+  const count: Record<string, { n: number; maxConf: number }> = {};
+  perImage.forEach(img => {
+    img.results.forEach(r => {
+      const k = r.name.toLowerCase();
+      if (!count[k]) count[k] = { n: 0, maxConf: 0 };
+      count[k].n++;
+      count[k].maxConf = Math.max(count[k].maxConf, r.confidence ?? 0);
+    });
+  });
+  return Object.entries(count)
+    .filter(([, v]) => v.n >= CONSENSUS_MIN_IMAGES || v.maxConf >= CONSENSUS_HIGH_CONF)
+    .map(([k]) => k);
+}
 function computeGlobal(perImage: { results: MineralResult[] }[]) {
   const m = new Map<string, { sumPct: number; sumConf: number; count: number; name: string }>();
   for (const img of perImage) {
@@ -137,11 +130,10 @@ function computeGlobal(perImage: { results: MineralResult[] }[]) {
   return normalizeTo100(out);
 }
 
-/* ===== Parseo robusto JSON del modelo ===== */
 function extractJson(text: string): any {
   if (!text) return null;
   let t = text.trim();
-  t = t.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim(); // quitar fences
+  t = t.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
   if (t.startsWith("<")) { const m = t.match(/(\{[\s\S]*\}|\[[\s\S]*\])/); if (m) t = m[1]; }
   try { return JSON.parse(t); } catch {}
   const arrMatch = t.match(/\{[\s\S]*"results"\s*:\s*(\[[\s\S]*?\])[\s\S]*\}/);
@@ -149,7 +141,7 @@ function extractJson(text: string): any {
   return null;
 }
 
-/* ===== Modelo: descubrimiento + backoff ===== */
+// ---- Modelo disponible
 async function listModelsForKey(apiKey: string): Promise<string[]> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`;
   try {
@@ -159,7 +151,6 @@ async function listModelsForKey(apiKey: string): Promise<string[]> {
     return names.map(n => n.replace(/^models\//, ""));
   } catch { return []; }
 }
-
 async function getFirstWorkingModel(ai: GoogleGenerativeAI, apiKey: string) {
   const fromApi = await listModelsForKey(apiKey);
   const candidates = [...new Set([...fromApi, ...STATIC_FALLBACKS])];
@@ -175,13 +166,12 @@ async function getFirstWorkingModel(ai: GoogleGenerativeAI, apiKey: string) {
           responseMimeType: "application/json",
         } as any,
       });
-      await genWithRetry(model, [{ role: "user", parts: [{ text: "ok" }] }]); // ping
+      await genWithRetry(model, [{ role: "user", parts: [{ text: "ok" }] }]);
       return model;
     } catch (e: any) { errors.push(`${name}: ${e?.message || e}`); continue; }
   }
   throw new Error("Ningún modelo respondió. Intentados → " + errors.join(" | "));
 }
-
 async function genWithRetry(model: ReturnType<GoogleGenerativeAI["getGenerativeModel"]>, contents: any) {
   let delay = INITIAL_DELAY_MS;
   for (let i = 0; i <= MAX_RETRIES; i++) {
@@ -196,7 +186,7 @@ async function genWithRetry(model: ReturnType<GoogleGenerativeAI["getGenerativeM
   throw new Error("Sin respuesta tras reintentos.");
 }
 
-/* ===== Modo offline demo ===== */
+/* ===========================  MODO OFFLINE  =========================== */
 function offlineAnalyze(files: File[]) {
   const demoSets: string[][] = [
     ["Malaquita", "Azurita", "Limonita"],
@@ -215,30 +205,12 @@ function offlineAnalyze(files: File[]) {
     return { fileName: f.name || `foto-${idx + 1}.jpg`, results: normalizeTo100(results) };
   });
   const global = computeGlobal(perImage);
-  return { perImage, global, excluded: [] as Excluded[], interpretation: defaultInterpretation(global), offline: true };
-}
-
-/* ===== Interpretación preliminar (opcional) ===== */
-function defaultInterpretation(global: MineralResult[]) {
-  const names = new Set(global.map(g => g.name.toLowerCase()));
-  const has = (...keys: string[]) => keys.some(k => names.has(k));
-  const hints: string[] = [];
-
-  if (has("pirita") && has("calcopirita")) {
-    hints.push("Asociación pirita + calcopirita: posible presencia de Au \"invisible\" en sulfuros; confirmar con ensayo al fuego.");
-  }
-  if (has("galena")) hints.push("Galena presente: Pb, suele asociar Ag (plata) en galena argentífera.");
-  if (has("malaquita", "azurita", "bornita", "calcopirita")) {
-    hints.push("Minerales de cobre detectados: evaluar ley económica (ICP/AA para Cu).");
-  }
-  if (!hints.length) hints.push("Estimación visual/IA exploratoria; confirmar en laboratorio antes de decisiones.");
-
-  return {
-    geologia: "Conjunto de minerales consistente con ambientes hidrotermales; interpretación exploratoria.",
-    economia: "Si hay menas (Cu, Pb, Zn, Au/Ag) con ley suficiente, evaluar recuperación y pagos; confirmar con análisis químico.",
-    advertencias: "Resultados preliminares sin valor legal/económico; use ensayo al fuego e ICP/AA para confirmación.",
-    notas: hints,
+  const interpretation = {
+    geology: "Asociación coherente con ambientes de oxidación/cupríferos (ej. malaquita/azurita + limonita).",
+    economics: "Posible interés por cobre si la fracción pagable es significativa; confirmar con análisis químico.",
+    caveats: "Estimación visual/IA; validar con ensayo de laboratorio antes de decisiones.",
   };
+  return { perImage, global, excluded: [] as Excluded[], interpretation, offline: true };
 }
 
 /* ===========================   HANDLER    =========================== */
@@ -267,14 +239,14 @@ export async function POST(req: Request) {
       `Devuelve SOLO JSON EXACTO:\n` +
       `{\n  "results": [\n    {"name":"<mineral>","pct":<numero>,"confidence":<0..1>,"evidence":"<color/textura/forma>"}\n  ]\n}\n` +
       `Reglas:\n` +
-      `1) Da 2–5 minerales plausibles.\n` +
-      `2) La suma de "pct" debe ser 100.00 (dos decimales).\n` +
-      `3) Usa nombres estándar (Calcita, Cuarzo, Pirita, Hematita, Magnetita, Malaquita, Azurita, Calcopirita, Galena, Esfalerita, Bornita, Arsenopirita, etc.).\n` +
+      `1) Da de 2 a 5 minerales plausibles en la foto.\n` +
+      `2) Suma de "pct" = 100.00 (dos decimales).\n` +
+      `3) Usa nombres estándar.\n` +
       `4) Sé conservador con "confidence".\n` +
       `5) Sin texto fuera del JSON.`;
 
-    const excluded: Excluded[] = [];
     const perRaw: OneImage[] = [];
+    const excluded: Excluded[] = [];
 
     async function analyzeOne(f: File) {
       try {
@@ -312,18 +284,53 @@ export async function POST(req: Request) {
     for (let i = 0; i < Math.min(CONCURRENCY, files.length); i++) tasks.push(worker());
     await Promise.all(tasks);
 
-    // Filtro flexible por imagen (NO hay descarte por “no_consensus”)
+    // Filtrar por imagen
     let perImage = perRaw.map(x => {
       const filtered = filterPerImage(x.results);
-      // No metemos low_confidence en excluded; solo timeout/parse_error
-      // Si no hay nada, metemos “Indeterminado”
-      return filtered.length
-        ? { fileName: x.fileName, results: filtered }
-        : { fileName: x.fileName, results: [{ name: "Indeterminado", pct: 100, confidence: 0.2 }] };
+      if (!filtered.length) excluded.push({ fileName: x.fileName, reason: "low_confidence" });
+      return { fileName: x.fileName, results: filtered.length ? filtered : [] };
     });
 
+    // Consenso
+    if (perImage.length >= 2) {
+      const keep = new Set(consensusAcrossImages(perImage));
+      perImage = perImage.map(img => {
+        const kept = img.results.filter(r => keep.has(r.name.toLowerCase()));
+        if (!kept.length && img.results.length) excluded.push({ fileName: img.fileName, reason: "no_consensus" });
+        return kept.length ? { ...img, results: normalizeTo100(kept) } : { ...img, results: [] };
+      });
+    }
+
+    // Relleno si quedó vacío
+    perImage = perImage.map(img =>
+      img.results.length ? img : { ...img, results: [{ name: "Indeterminado", pct: 100, confidence: 0.2 }] },
+    );
+
     const global = computeGlobal(perImage);
-    const interpretation = defaultInterpretation(global);
+
+    // --------- Interpretación breve (geología/economía/advertencias)
+    // Se construye un texto corto sin otra llamada al modelo para evitar latencia:
+    const names = global.map(g => g.name.toLowerCase());
+    const hasCuSec = names.some(n => /(malaquita|azurita|crisocola|cuprita|bornita|calcopirita)/i.test(n));
+    const hasFeOx = names.some(n => /(limonita|goethita|hematita)/i.test(n));
+    const hasAuAg = names.some(n => /(pirita|arsenopirita|galena|esfalerita|tetraedrita|electrum|oro|plata)/i.test(n));
+
+    const interpretation = {
+      geology:
+        hasCuSec
+          ? "Textura compatible con zona de oxidación de cobre (malaquita/azurita) con óxidos de Fe."
+          : hasFeOx
+          ? "Predominio de óxidos/hidróxidos de Fe; posible alteración supergénica."
+          : "Asociación general sin indicador metalífero dominante.",
+      economics:
+        hasCuSec
+          ? "Potencial por Cu si % pagable y tonelaje lo justifican; verificar con análisis químico."
+          : hasAuAg
+          ? "Posible sistema polimetálico con Au/Ag subordinados; confirmar en laboratorio."
+          : "Sin evidencia clara de commodity económico; se requiere verificación analítica.",
+      caveats:
+        "Estimación visual asistida por IA. Confirmar con ensayo al fuego (Au/Ag) e ICP/AA (Cu y otros). Considerar heterogeneidad de muestra.",
+    };
 
     return Response.json({ perImage, global, excluded, interpretation }, { status: 200 });
   } catch (e: any) {
