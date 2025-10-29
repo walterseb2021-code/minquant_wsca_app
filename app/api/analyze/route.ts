@@ -8,11 +8,17 @@ type MineralResult = { name: string; pct: number; confidence?: number; evidence?
 type OneImage = { fileName: string; results: MineralResult[] };
 type Excluded = { fileName: string; reason: "timeout" | "parse_error" | "low_confidence" | "no_consensus" };
 
+type Interpretation = {
+  geology: string;
+  economics: string;
+  caveats: string;
+};
+
 const TEMPERATURE = 0.2;
-const CONF_MIN = 0.30;             // confianza mínima por mineral
-const PCT_MIN = 1.0;               // % mínimo por mineral
-const CONSENSUS_MIN_IMAGES = 2;    // presente en >= 2 fotos...
-const CONSENSUS_HIGH_CONF = 0.8;   // ...o con confianza alta
+const CONF_MIN = 0.30;
+const PCT_MIN = 1.0;
+const CONSENSUS_MIN_IMAGES = 2;
+const CONSENSUS_HIGH_CONF = 0.8;
 
 const STATIC_FALLBACKS = [
   "gemini-2.5-flash-preview-05-20",
@@ -28,20 +34,22 @@ const STATIC_FALLBACKS = [
 const MAX_RETRIES = 2;
 const INITIAL_DELAY_MS = 700;
 
-// ===== límites para evitar 504
+// límites seguros
 const SERVER_MAX_IMAGES = 6;
 const PER_IMAGE_TIMEOUT_MS = 15_000; // 15 s por imagen
 const CONCURRENCY = 2;               // 2 imágenes a la vez
+const INTERP_TIMEOUT_MS = 6_000;     // 6 s para interpretación breve
 
-// ---------- utils básicos
+// ---------- utils
 const toBase64 = (f: File) => f.arrayBuffer().then(ab => Buffer.from(ab).toString("base64"));
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
 const cleanName = (raw: string) =>
   String(raw || "")
     .trim()
     .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9 \-()/]/g, "")
     .replace(/\s+/g, " ")
     .replace(/^./, c => c.toUpperCase());
-const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 function withTimeout<T>(p: Promise<T>, ms: number, tag = "timeout"): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -68,6 +76,7 @@ function mergeDuplicates(arr: MineralResult[]): MineralResult[] {
   }
   return [...map.values()];
 }
+
 function normalizeTo100(results: MineralResult[]): MineralResult[] {
   const sum = results.reduce((a, b) => a + (b.pct || 0), 0);
   if (sum <= 0) return results.map(r => ({ ...r, pct: 0 }));
@@ -76,11 +85,13 @@ function normalizeTo100(results: MineralResult[]): MineralResult[] {
   const tot = +rounded.reduce((a, b) => a + b.pct, 0).toFixed(2);
   const diff = +(100 - tot).toFixed(2);
   if (diff !== 0 && rounded.length) {
-    let i = 0; for (let j = 1; j < rounded.length; j++) if (rounded[j].pct > rounded[i].pct) i = j;
+    let i = 0;
+    for (let j = 1; j < rounded.length; j++) if (rounded[j].pct > rounded[i].pct) i = j;
     rounded[i] = { ...rounded[i], pct: +(rounded[i].pct + diff).toFixed(2) };
   }
   return rounded;
 }
+
 function filterPerImage(list: MineralResult[]): MineralResult[] {
   let r = (list || [])
     .map(it => ({
@@ -96,6 +107,7 @@ function filterPerImage(list: MineralResult[]): MineralResult[] {
   r.sort((a, b) => b.pct - a.pct || (b.confidence ?? 0) - (a.confidence ?? 0));
   return normalizeTo100(r);
 }
+
 function consensusAcrossImages(perImage: { results: MineralResult[] }[]): string[] {
   const count: Record<string, { n: number; maxConf: number }> = {};
   perImage.forEach(img => {
@@ -110,6 +122,7 @@ function consensusAcrossImages(perImage: { results: MineralResult[] }[]): string
     .filter(([, v]) => v.n >= CONSENSUS_MIN_IMAGES || v.maxConf >= CONSENSUS_HIGH_CONF)
     .map(([k]) => k);
 }
+
 function computeGlobal(perImage: { results: MineralResult[] }[]) {
   const m = new Map<string, { sumPct: number; sumConf: number; count: number; name: string }>();
   for (const img of perImage) {
@@ -132,19 +145,22 @@ function computeGlobal(perImage: { results: MineralResult[] }[]) {
   return normalizeTo100(out);
 }
 
-// ---------- Parseo robusto
+// ---------- parseo robusto
 function extractJson(text: string): any {
   if (!text) return null;
   let t = text.trim();
-  t = t.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim(); // ``` fences
-  if (t.startsWith("<")) { const m = t.match(/(\{[\s\S]*\}|\[[\s\S]*\])/); if (m) t = m[1]; }
+  t = t.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+  if (t.startsWith("<")) {
+    const m = t.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+    if (m) t = m[1];
+  }
   try { return JSON.parse(t); } catch {}
   const arrMatch = t.match(/\{[\s\S]*"results"\s*:\s*(\[[\s\S]*?\])[\s\S]*\}/);
   if (arrMatch) { try { return { results: JSON.parse(arrMatch[1]) }; } catch {} }
   return null;
 }
 
-// ---------- Descubrir/seleccionar modelo
+// ---------- modelos
 async function listModelsForKey(apiKey: string): Promise<string[]> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`;
   try {
@@ -154,6 +170,7 @@ async function listModelsForKey(apiKey: string): Promise<string[]> {
     return names.map(n => n.replace(/^models\//, ""));
   } catch { return []; }
 }
+
 async function getFirstWorkingModel(ai: GoogleGenerativeAI, apiKey: string) {
   const fromApi = await listModelsForKey(apiKey);
   const candidates = [...new Set([...fromApi, ...STATIC_FALLBACKS])];
@@ -162,21 +179,15 @@ async function getFirstWorkingModel(ai: GoogleGenerativeAI, apiKey: string) {
     try {
       const model = ai.getGenerativeModel({
         model: name,
-        generationConfig: {
-          temperature: TEMPERATURE,
-          topK: 40,
-          topP: 0.5,
-          responseMimeType: "application/json",
-        } as any,
+        generationConfig: { temperature: TEMPERATURE, topK: 40, topP: 0.5, responseMimeType: "application/json" } as any,
       });
-      await genWithRetry(model, [{ role: "user", parts: [{ text: "ok" }] }]); // ping
+      await genWithRetry(model, [{ role: "user", parts: [{ text: "ok" }] }]);
       return model;
     } catch (e: any) { errors.push(`${name}: ${e?.message || e}`); continue; }
   }
   throw new Error("Ningún modelo respondió. Intentados → " + errors.join(" | "));
 }
 
-// ---------- generateContent con reintentos/backoff para 429/503
 async function genWithRetry(model: ReturnType<GoogleGenerativeAI["getGenerativeModel"]>, contents: any) {
   let delay = INITIAL_DELAY_MS;
   for (let i = 0; i <= MAX_RETRIES; i++) {
@@ -191,7 +202,7 @@ async function genWithRetry(model: ReturnType<GoogleGenerativeAI["getGenerativeM
   throw new Error("Sin respuesta tras reintentos.");
 }
 
-/* ===========================  MODO OFFLINE  =========================== */
+/* ===========================  OFFLINE  =========================== */
 function offlineAnalyze(files: File[]) {
   const demoSets: string[][] = [
     ["Malaquita", "Azurita", "Limonita"],
@@ -210,7 +221,15 @@ function offlineAnalyze(files: File[]) {
     return { fileName: f.name || `foto-${idx + 1}.jpg`, results: normalizeTo100(results) };
   });
   const global = computeGlobal(perImage);
-  return { perImage, global, excluded: [] as Excluded[], offline: true };
+  const interpretation: Interpretation = {
+    geology:
+      "Interpretación offline: asociación mineral lógica para ensayo; tomar como exploratoria.",
+    economics:
+      "Valores económicos no inferidos offline. Se sugiere obtener precios y ensayar laboratorio.",
+    caveats:
+      "Resultados simulados para pruebas sin conexión; confirmar con análisis químico.",
+  };
+  return { perImage, global, excluded: [] as Excluded[], interpretation, offline: true };
 }
 
 /* ===========================   HANDLER    =========================== */
@@ -236,7 +255,7 @@ export async function POST(req: Request) {
     const ai = new GoogleGenerativeAI(apiKey);
     const model = await getFirstWorkingModel(ai, apiKey);
 
-    const prompt =
+    const promptJSON =
       `Devuelve SOLO JSON EXACTO:\n` +
       `{\n  "results": [\n    {"name":"<mineral>","pct":<numero>,"confidence":<0..1>,"evidence":"<color/textura/forma>"}\n  ]\n}\n` +
       `Reglas:\n` +
@@ -256,7 +275,7 @@ export async function POST(req: Request) {
         const res = await withTimeout(
           genWithRetry(
             model,
-            [{ role: "user", parts: [{ inlineData: { mimeType: mime, data: b64 } }, { text: prompt }] }]
+            [{ role: "user", parts: [{ inlineData: { mimeType: mime, data: b64 } }, { text: promptJSON }] }]
           ),
           PER_IMAGE_TIMEOUT_MS,
           "timeout"
@@ -285,7 +304,7 @@ export async function POST(req: Request) {
     for (let i = 0; i < Math.min(CONCURRENCY, files.length); i++) tasks.push(worker());
     await Promise.all(tasks);
 
-    // Filtro por imagen (baja confianza) y registro en excluded
+    // Filtro por imagen y excluded
     let perImage = perRaw.map(x => {
       const filtered = filterPerImage(x.results);
       if (!filtered.length) excluded.push({ fileName: x.fileName, reason: "low_confidence" });
@@ -309,7 +328,49 @@ export async function POST(req: Request) {
 
     const global = computeGlobal(perImage);
 
-    return Response.json({ perImage, global, excluded }, { status: 200 });
+    // ======= Nueva interpretación breve (geology/economics/caveats)
+    let interpretation: Interpretation = {
+      geology: "No disponible.",
+      economics: "No disponible.",
+      caveats: "No disponible.",
+    };
+
+    try {
+      const top = global.slice(0, 6).map(r => `${r.name} ${r.pct.toFixed(1)}%`).join(", ");
+      const promptInterp =
+        `Devuelve SOLO JSON con 3 campos string: {"geology":"", "economics":"", "caveats":""}.\n` +
+        `Contexto: estoy analizando fotos de una muestra mineral.\n` +
+        `Composición global estimada: ${top}.\n` +
+        `Escribe en español, estilo técnico breve (2-3 frases por campo), sin promesas ni conclusiones absolutas.\n` +
+        `- "geology": interpreta paragénesis y ambiente probable.\n` +
+        `- "economics": comenta potencial económico (Au/Ag/Cu/Pb/Zn) solo si procede, en condicional.\n` +
+        `- "caveats": advertencias metodológicas (necesidad de ensayo químico, limitaciones visuales).`;
+
+      const resI = await withTimeout(
+        genWithRetry(model, [{ role: "user", parts: [{ text: promptInterp }] }]),
+        INTERP_TIMEOUT_MS,
+        "timeout"
+      );
+      const txt = resI?.response?.text?.() ?? "";
+      const parsedI = extractJson(txt);
+      if (parsedI && typeof parsedI === "object") {
+        interpretation = {
+          geology: String(parsedI.geology ?? interpretation.geology),
+          economics: String(parsedI.economics ?? interpretation.economics),
+          caveats: String(parsedI.caveats ?? interpretation.caveats),
+        };
+      }
+    } catch {
+      // fallback breve si el modelo tarda
+      const top = global[0]?.name ?? "la muestra";
+      interpretation = {
+        geology: `La asociación observada sugiere un conjunto de minerales coherente con ambientes hidrotermales; "${top}" domina la mezcla estimada.`,
+        economics: `Podría existir potencial económico si los minerales de mena (p.ej. Cu, Pb, Zn, Au/Ag asociados) están presentes con leyes suficientes; se requiere confirmación.`,
+        caveats: `Estimación visual/IA preliminar; validar con ensayo químico (Au/Ag por fuego; metales base por ICP/AA) antes de cualquier decisión.`,
+      };
+    }
+
+    return Response.json({ perImage, global, excluded, interpretation }, { status: 200 });
   } catch (e: any) {
     return Response.json({ error: e?.message || "Error analizando" }, { status: 500 });
   }
