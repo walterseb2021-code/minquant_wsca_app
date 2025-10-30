@@ -52,7 +52,7 @@ export type BuildReportOptions = {
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const toPct = (n: number, digits = 2) => `${n.toFixed(digits)} %`;
 
-/** Limpia caracteres problemáticos (como •) */
+/** Limpia caracteres problemáticos (• y saltos) */
 function sanitizeText(s: string): string {
   return s
     .replace(/\u2022/g, "-")
@@ -78,34 +78,73 @@ async function fetchStaticMap(lat: number, lng: number, width = 900, height = 38
   }
 }
 
-/** Mapeo rápido mineral→metal */
+/** === Heurísticas metalíferas (bilingüe ES/EN, case-insensitive) === */
+const RX = {
+  cu: /(malaquita|malachite|azurita|azurite|crisocola|chrysocolla|cuprita|cuprite|tenorita|tenorite|bornita|bornite|calcopirita|chalcopyrite)/i,
+  fe: /(pirita|pyrite|hematita|hematite|goethita|goethite|magnetita|magnetite|limonita|limonite|marcasita|marcasite)/i,
+  au: /(oro nativo|oro|gold|aurífer|auriferous|arsenopirita|arsenopyrite)/i,
+  ag: /(plata nativa|plata|silver|argentita|argentite|acantita|acanthite|clorargirita|cerargyrite)/i,
+  zn: /(esfalerita|sphalerite|blenda)/i,
+  pb: /(galena)/i,
+  gangas: /(calcita|calcite|dolomita|dolomite|barita|barite|cuarzo|quartz)/i,
+};
+
+/** Mapeo rápido mineral→metal usando RX */
 function mineralToMetals(name: string): Commodity["code"][] {
-  const s = name.toLowerCase();
-  if (/(malaquita|azurita|crisocola|cuprita|tenorita|bornita|calcopirita)/.test(s)) return ["Cu"];
-  if (/(galena)/.test(s)) return ["Pb"];
-  if (/(esfalerita|blenda)/.test(s)) return ["Zn"];
-  if (/(oro|electrum|arsenopirita|pirita)/.test(s)) return ["Au"];
-  if (/(plata|argentita|acantita|clorargirita)/.test(s)) return ["Ag"];
-  if (/(hematita|goethita|magnetita|limonita|marcasita)/.test(s)) return ["Fe"];
+  if (RX.cu.test(name)) return ["Cu"];
+  if (RX.pb.test(name)) return ["Pb"];
+  if (RX.zn.test(name)) return ["Zn"];
+  if (RX.au.test(name)) return ["Au"];
+  if (RX.ag.test(name)) return ["Ag"];
+  if (RX.fe.test(name)) return ["Fe"];
   return [];
 }
 
-/** Interpretación */
+/** === Interpretación dinámica (bilingüe, ponderada por % del mix) === */
 function interpretMix(mix: GlobalMix): string {
-  const by = (rx: RegExp) => mix.some(m => rx.test(m.name.toLowerCase()));
-  const weight = (rx: RegExp) => mix.filter(m => rx.test(m.name.toLowerCase())).reduce((a, b) => a + b.pct, 0);
+  // Peso acumulado por “familia”
+  const w = {
+    Cu: mix.filter(m => RX.cu.test(m.name)).reduce((a, b) => a + b.pct, 0),
+    Fe: mix.filter(m => RX.fe.test(m.name)).reduce((a, b) => a + b.pct, 0),
+    Au: mix.filter(m => RX.au.test(m.name)).reduce((a, b) => a + b.pct, 0),
+    Ag: mix.filter(m => RX.ag.test(m.name)).reduce((a, b) => a + b.pct, 0),
+    Zn: mix.filter(m => RX.zn.test(m.name)).reduce((a, b) => a + b.pct, 0),
+    Pb: mix.filter(m => RX.pb.test(m.name)).reduce((a, b) => a + b.pct, 0),
+    G:  mix.filter(m => RX.gangas.test(m.name)).reduce((a, b) => a + b.pct, 0),
+  };
+
   const lines: string[] = [];
 
-  if (by(/malaquita|azurita|crisocola|bornita|calcopirita/))
-    lines.push(`• Dominio cuprífero (${round2(weight(/malaquita|azurita|crisocola|bornita|calcopirita/))} %): posible zona oxidada con potencial para lixiviación.`);
-  if (by(/pirita|hematita|goethita|magnetita|limonita/))
-    lines.push(`• Fuerte impronta férrica (${round2(weight(/pirita|hematita|goethita|magnetita|limonita/))} %): indica ambiente oxidado o hidrotermal.`);
-  if (by(/oro|arsenopirita/))
-    lines.push(`• Presencia aurífera (${round2(weight(/oro|arsenopirita/))} %): revisar sulfuros finos para confirmación.`);
-  if (by(/plata|argentita|acantita/))
-    lines.push(`• Plata detectada (${round2(weight(/plata|argentita|acantita/))} %): verificar mena argentífera secundaria.`);
-  if (!lines.length)
-    lines.push("• Sin indicadores metálicos dominantes. Recomendado análisis químico complementario.");
+  // Dominancias (umbrales suaves)
+  if (w.Cu >= 15) {
+    const dominio = w.Cu >= 40 ? "Dominio cuprífero" : "Signo cuprífero";
+    lines.push(`• ${dominio} (≈ ${round2(w.Cu)} % del ensamblaje): especies carbonato/óxido (malaquita/azurita/crisocola) sugieren zona oxidada; evaluar lixiviación o beneficio oxidado.`);
+  }
+  if (w.Fe >= 10) {
+    lines.push(`• Impronta férrica (≈ ${round2(w.Fe)} %): gossan/meteorización o ambiente hidrotermal; la pirita puede correlacionar con Au fino.`);
+  }
+  if (w.Au >= 3) {
+    lines.push(`• Potencial aurífero (≈ ${round2(w.Au)} %): revisar sulfuros finos (pirita/arsenopirita). Recomendado ensayo al fuego o metal screen.`);
+  }
+  if (w.Ag >= 5) {
+    lines.push(`• Plata presente (≈ ${round2(w.Ag)} %): verificar mena argentífera secundaria (clorargirita) en zona oxidada.`);
+  }
+  if (w.Zn >= 5 || w.Pb >= 5) {
+    const tags: string[] = [];
+    if (w.Pb >= 5) tags.push(`Pb≈${round2(w.Pb)}%`);
+    if (w.Zn >= 5) tags.push(`Zn≈${round2(w.Zn)}%`);
+    lines.push(`• Firma polimetálica acompañante (${tags.join(" / ")}): puede adicionar valor en concentrado o blend.`);
+  }
+  if (w.G >= 10) {
+    lines.push(`• Ganga significativa (≈ ${round2(w.G)} %: calcita/dolomita/cuarzo): posible dilución de leyes; considerar preconcentración o selección manual.`);
+  }
+
+  if (!lines.length) {
+    lines.push("• Ensamble sin indicadores metálicos dominantes. Sugerido muestreo adicional y verificación analítica.");
+  }
+
+  // Advertencia fija (sanitizada)
+  lines.push("• Estimación visual asistida por IA. Confirmar con ensayo químico (Au/Ag: fuego/AA; Cu/Pb/Zn: ICP/AA).");
   return sanitizeText(lines.join("\n"));
 }
 
@@ -122,6 +161,7 @@ function buildEconomics(mix: GlobalMix, overrides?: EconOverrides) {
 
   const commodities = BASE_COMMODITIES.filter(c => (c.enabled || present.has(c.code)));
 
+  // Tenores heurísticos (idénticos a versión previa)
   function estimateTenor(code: Commodity["code"]): number {
     const rel = mix.filter(m => mineralToMetals(m.name).includes(code)).reduce((a, b) => a + b.pct, 0);
     switch (code) {
@@ -159,7 +199,7 @@ export async function buildReportPdfPlus(args: {
   const pageW = doc.internal.pageSize.getWidth();
   let y = margin;
 
-  // Configura estilos consistentes
+  // Estilos consistentes
   const headFill = [230, 240, 255];
   const headText = [30, 30, 30];
   const cellText = [20, 20, 20];
@@ -179,12 +219,13 @@ export async function buildReportPdfPlus(args: {
   y += 14;
 
   // Mapa
-  if (opts?.lat && opts?.lng) {
+  if (typeof opts?.lat === "number" && typeof opts?.lng === "number") {
     const mapW = 220, mapH = 120, x = pageW - margin - mapW, topY = margin;
     try {
       const durl = await fetchStaticMap(opts.lat, opts.lng, 900, 380);
-      if (durl) doc.addImage(durl, "PNG", x, topY, mapW, mapH);
-      else {
+      if (durl) {
+        doc.addImage(durl, "PNG", x, topY, mapW, mapH);
+      } else {
         doc.setDrawColor(180); doc.rect(x, topY, mapW, mapH);
         doc.text("Mapa no disponible", x + 8, topY + 16);
       }
@@ -221,7 +262,7 @@ export async function buildReportPdfPlus(args: {
   });
   y = (doc as any).lastAutoTable.finalY + 12;
 
-  // Interpretación
+  // Interpretación (dinámica real)
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
   doc.text("Interpretación preliminar (automática)", margin, y);
