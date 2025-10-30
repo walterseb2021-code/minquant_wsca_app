@@ -134,12 +134,61 @@ export default function AnalisisPage() {
   const [sampleCode, setSampleCode] = React.useState("MQ-0001");
   const [currency, setCurrency] = React.useState<CurrencyCode>("USD");
 
-  // Ajustes de recuperaciones/payables
+  // Ajustes de recuperaciones/payables (por proceso)
   const [adj, setAdj] = React.useState<CommodityAdjustments>({
     Cobre: { recovery: 0.88, payable: 0.96 },
     Zinc: { recovery: 0.85, payable: 0.85 },
     Plomo: { recovery: 0.90, payable: 0.90 },
   });
+
+  // **NUEVO**: Precios y payables por commodity (para PDF Económico)
+  const [prices, setPrices] = React.useState<Record<"Cu" | "Zn" | "Pb" | "Au" | "Ag", number>>({
+    Cu: 9.0,  // USD por kg/t (referencial)
+    Zn: 2.7,
+    Pb: 2.1,
+    Au: 75.0, // USD por g/t (referencial)
+    Ag: 0.90, // USD por g/t (referencial)
+  });
+  const [payables, setPayables] = React.useState<Record<"Cu" | "Zn" | "Pb" | "Au" | "Ag", number>>({
+    Cu: 0.85,
+    Zn: 0.85,
+    Pb: 0.85,
+    Au: 0.92,
+    Ag: 0.90,
+  });
+
+  // ======= PERSISTENCIA EN LOCALSTORAGE (Opción A: simple con useEffect) =======
+  React.useEffect(() => {
+    try {
+      const c = localStorage.getItem("mq_currency");
+      const p = localStorage.getItem("mq_prices");
+      const pa = localStorage.getItem("mq_payables");
+      const adjStr = localStorage.getItem("mq_process_adj"); // opcional
+
+      if (c) setCurrency(c as any);
+      if (p) setPrices(prev => ({ ...prev, ...JSON.parse(p) }));
+      if (pa) setPayables(prev => ({ ...prev, ...JSON.parse(pa) }));
+      if (adjStr) setAdj(prev => ({ ...prev, ...JSON.parse(adjStr) }));
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  React.useEffect(() => {
+    try { localStorage.setItem("mq_currency", String(currency)); } catch {}
+  }, [currency]);
+
+  React.useEffect(() => {
+    try { localStorage.setItem("mq_prices", JSON.stringify(prices)); } catch {}
+  }, [prices]);
+
+  React.useEffect(() => {
+    try { localStorage.setItem("mq_payables", JSON.stringify(payables)); } catch {}
+  }, [payables]);
+
+  React.useEffect(() => {
+    try { localStorage.setItem("mq_process_adj", JSON.stringify(adj)); } catch {}
+  }, [adj]);
+  // ======= FIN PERSISTENCIA =======
 
   // Resultados
   const [globalResults, setGlobalResults] = React.useState<MineralResult[]>([]);
@@ -231,7 +280,19 @@ export default function AnalisisPage() {
         Plomo: { recovery: adj?.Plomo?.recovery ?? 0.90, payable: adj?.Plomo?.payable ?? 0.90 },
       };
 
-      const doc = await buildReportPdfPlus({
+      // Mapeo de moneda a las aceptadas por el PDF económico:
+      const econCurrency = (currency === "PEN" ? "PEN" : "USD") as "USD" | "PEN";
+
+      // Overrides para economía (precios y payables por commodity)
+      const econOverrides = {
+        currency: econCurrency,
+        prices: { ...prices },       // { Cu, Zn, Pb, Au, Ag }
+        payables: { ...payables },   // { Cu, Zn, Pb, Au, Ag }
+      };
+
+      // Llamada flexible para ambas variantes de buildReportPdfPlus
+      const doc = await (buildReportPdfPlus as any)({
+        // ==== Firma "vieja" compatible ====
         appName: "MinQuant_WSCA",
         sampleCode,
         results: globalResults,
@@ -248,8 +309,28 @@ export default function AnalisisPage() {
           : undefined,
         embedStaticMap: true,
         recoveryPayables: safeAdj,
-        interpretation: interpretation || undefined, // ✅ sale en el PDF
+        interpretation: interpretation || undefined,
         excluded,
+
+        // ==== Firma "nueva" propuesta ====
+        mixGlobal: globalResults?.map(r => ({ name: r.name, pct: r.pct })) ?? [],
+        byImage: perImage?.map(p => ({
+          filename: p.fileName,
+          minerals: p.results.map(rr => ({ name: rr.name, pct: rr.pct })),
+        })) ?? [],
+        opts: {
+          title: "Reporte de Análisis Mineral – MinQuant_WSCA",
+          lat: geo?.point?.lat,
+          lng: geo?.point?.lng,
+          dateISO: new Date().toISOString(),
+          econ: econOverrides,
+          note: "Advertencia: Informe preliminar, referencial; requiere validación con ensayo químico.",
+        },
+
+        // ==== Overrides explícitos por si tu versión los lee así ====
+        priceOverrides: prices,
+        payableOverrides: payables,
+        econ: econOverrides,
       });
 
       const buffer = doc.output("arraybuffer");
@@ -338,8 +419,9 @@ export default function AnalisisPage() {
             </div>
           </div>
 
+          {/* Recuperación/Payable por proceso */}
           <div className="border rounded-lg p-3 bg-gray-50 mb-4">
-            <div className="font-semibold mb-2">Recuperación y Payable</div>
+            <div className="font-semibold mb-2">Recuperación y Payable (proceso)</div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {(["Cobre", "Zinc", "Plomo"] as const).map(metal => (
                 <div key={metal} className="border rounded p-2 bg-white">
@@ -361,6 +443,49 @@ export default function AnalisisPage() {
                 </div>
               ))}
             </div>
+          </div>
+
+          {/* Precios y Payables por commodity */}
+          <div className="border rounded-lg p-3 bg-gray-50 mb-4">
+            <div className="font-semibold mb-2">Economía: Precios y Payables por commodity</div>
+            <p className="text-xs text-gray-600 mb-2">
+              Edita el <b>precio</b> (por unidad mostrada en PDF) y el <b>payable</b> (0–1) para cada commodity. Se reflejarán en la tabla económica del PDF general.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {(["Cu","Zn","Pb","Au","Ag"] as const).map(code => (
+                <div key={code} className="border rounded p-2 bg-white">
+                  <div className="text-sm font-medium mb-2">{
+                    {Cu:"Cobre (Cu)", Zn:"Zinc (Zn)", Pb:"Plomo (Pb)", Au:"Oro (Au)", Ag:"Plata (Ag)"}[code]
+                  }</div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs w-16">Precio</label>
+                    <input
+                      type="number" step="0.01" className="border rounded px-2 py-1 w-28 text-sm"
+                      value={String(prices[code])}
+                      onChange={(e)=> setPrices(p=>({...p, [code]: Number(e.target.value || 0)}))}
+                      placeholder="Precio"
+                      title={`Precio para ${code}`}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <label className="text-xs w-16">Payable</label>
+                    <input
+                      type="number" step="0.01" min="0" max="1" className="border rounded px-2 py-1 w-28 text-sm"
+                      value={String(payables[code])}
+                      onChange={(e)=> {
+                        const v = Math.max(0, Math.min(1, Number(e.target.value || 0)));
+                        setPayables(p=>({...p, [code]: v}));
+                      }}
+                      placeholder="0–1"
+                      title={`Payable para ${code}`}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-gray-500 mt-2">
+              Nota: Si escoges <b>EUR</b>, internamente se usará USD para el cálculo económico (puedes cambiarlo a PEN/USD si prefieres).
+            </p>
           </div>
 
           <CameraCapture onPhotos={handlePhotos} />
