@@ -9,11 +9,15 @@ type OneImage = { fileName: string; results: MineralResult[] };
 type Excluded = { fileName: string; reason: "timeout" | "parse_error" | "low_confidence" | "no_consensus" };
 
 const TEMPERATURE = 0.2;
-const CONF_MIN = 0.30;
-const PCT_MIN = 1.0;
-const CONSENSUS_MIN_IMAGES = 2;
-const CONSENSUS_HIGH_CONF = 0.8;
 
+// === UMBRALES (ajustados para evitar “Indeterminado” en exceso) ===
+const CONF_MIN = 0.28;           // confianza mínima por mineral (↓ un poco)
+const PCT_MIN = 0.5;             // % mínimo por mineral (↓ un poco)
+const LOW_CONF_REASON = 0.35;    // por debajo de esto, marcamos motivo explicitamente
+const CONSENSUS_MIN_IMAGES = 2;  // presente en >= 2 fotos...
+const CONSENSUS_HIGH_CONF = 0.80;// ...o con confianza alta
+
+// === Modelos fallback ===
 const STATIC_FALLBACKS = [
   "gemini-2.5-flash-preview-05-20",
   "gemini-2.5-flash",
@@ -28,10 +32,12 @@ const STATIC_FALLBACKS = [
 const MAX_RETRIES = 2;
 const INITIAL_DELAY_MS = 700;
 
+// === Límites de servidor
 const SERVER_MAX_IMAGES = 6;
 const PER_IMAGE_TIMEOUT_MS = 15_000;
 const CONCURRENCY = 2;
 
+// ---------- utils
 const toBase64 = (f: File) => f.arrayBuffer().then(ab => Buffer.from(ab).toString("base64"));
 const cleanName = (raw: string) =>
   String(raw || "")
@@ -56,7 +62,7 @@ function mergeDuplicates(arr: MineralResult[]): MineralResult[] {
     if (prev) {
       map.set(k, {
         name: prev.name,
-        pct: prev.pct + (it.pct || 0),
+        pct: (prev.pct || 0) + (it.pct || 0),
         confidence: Math.max(prev.confidence ?? 0, it.confidence ?? 0),
         evidence: prev.evidence || it.evidence,
       });
@@ -66,6 +72,7 @@ function mergeDuplicates(arr: MineralResult[]): MineralResult[] {
   }
   return [...map.values()];
 }
+
 function normalizeTo100(results: MineralResult[]): MineralResult[] {
   const sum = results.reduce((a, b) => a + (b.pct || 0), 0);
   if (sum <= 0) return results.map(r => ({ ...r, pct: 0 }));
@@ -79,7 +86,17 @@ function normalizeTo100(results: MineralResult[]): MineralResult[] {
   }
   return rounded;
 }
-function filterPerImage(list: MineralResult[]): MineralResult[] {
+
+/**
+ * Filtro principal por imagen.
+ * - Aplica limpieza, fusiones y umbrales.
+ * - Si TODO queda fuera, conservamos las 2 mejores hipótesis (top-2 por confianza)
+ *   para evitar el “Indeterminado” sistemático y dar pistas al usuario.
+ */
+function filterPerImageWithFallback(list: MineralResult[]): {
+  kept: MineralResult[];
+  droppedForLowConf: boolean;
+} {
   let r = (list || [])
     .map(it => ({
       name: cleanName(it.name),
@@ -90,10 +107,26 @@ function filterPerImage(list: MineralResult[]): MineralResult[] {
     .filter(it => it.name && it.pct >= 0);
 
   r = mergeDuplicates(r);
-  r = r.filter(it => (it.confidence ?? 0) >= CONF_MIN && it.pct >= PCT_MIN);
-  r.sort((a, b) => b.pct - a.pct || (b.confidence ?? 0) - (a.confidence ?? 0));
-  return normalizeTo100(r);
+
+  // 1) Filtro “duro”
+  let kept = r.filter(it => (it.confidence ?? 0) >= CONF_MIN && it.pct >= PCT_MIN);
+  kept.sort((a, b) => b.pct - a.pct || (b.confidence ?? 0) - (a.confidence ?? 0));
+
+  const droppedForLowConf = kept.length === 0;
+
+  // 2) Fallback: si no quedó nada, devolvemos top-2 por confianza (aunque sean < CONF_MIN)
+  if (kept.length === 0 && r.length) {
+    const ranked = [...r].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0) || b.pct - a.pct);
+    kept = ranked.slice(0, Math.min(2, ranked.length)).map(x => ({
+      ...x,
+      // “suavizamos” % para que sumen 100 entre ellas
+      pct: x.pct > 0 ? x.pct : 1,
+    }));
+  }
+
+  return { kept: normalizeTo100(kept), droppedForLowConf };
 }
+
 function consensusAcrossImages(perImage: { results: MineralResult[] }[]): string[] {
   const count: Record<string, { n: number; maxConf: number }> = {};
   perImage.forEach(img => {
@@ -108,6 +141,7 @@ function consensusAcrossImages(perImage: { results: MineralResult[] }[]): string
     .filter(([, v]) => v.n >= CONSENSUS_MIN_IMAGES || v.maxConf >= CONSENSUS_HIGH_CONF)
     .map(([k]) => k);
 }
+
 function computeGlobal(perImage: { results: MineralResult[] }[]) {
   const m = new Map<string, { sumPct: number; sumConf: number; count: number; name: string }>();
   for (const img of perImage) {
@@ -130,6 +164,7 @@ function computeGlobal(perImage: { results: MineralResult[] }[]) {
   return normalizeTo100(out);
 }
 
+// ---------- Parseo robusto
 function extractJson(text: string): any {
   if (!text) return null;
   let t = text.trim();
@@ -141,7 +176,7 @@ function extractJson(text: string): any {
   return null;
 }
 
-// ---- Modelo disponible
+// ---------- Modelos
 async function listModelsForKey(apiKey: string): Promise<string[]> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`;
   try {
@@ -166,12 +201,14 @@ async function getFirstWorkingModel(ai: GoogleGenerativeAI, apiKey: string) {
           responseMimeType: "application/json",
         } as any,
       });
-      await genWithRetry(model, [{ role: "user", parts: [{ text: "ok" }] }]);
+      await genWithRetry(model, [{ role: "user", parts: [{ text: "ok" }] }]); // ping
       return model;
     } catch (e: any) { errors.push(`${name}: ${e?.message || e}`); continue; }
   }
   throw new Error("Ningún modelo respondió. Intentados → " + errors.join(" | "));
 }
+
+// ---------- generateContent con reintentos/backoff para 429/503
 async function genWithRetry(model: ReturnType<GoogleGenerativeAI["getGenerativeModel"]>, contents: any) {
   let delay = INITIAL_DELAY_MS;
   for (let i = 0; i <= MAX_RETRIES; i++) {
@@ -284,24 +321,35 @@ export async function POST(req: Request) {
     for (let i = 0; i < Math.min(CONCURRENCY, files.length); i++) tasks.push(worker());
     await Promise.all(tasks);
 
-    // Filtrar por imagen
+    // Filtrar por imagen con fallback + marcar razones
     let perImage = perRaw.map(x => {
-      const filtered = filterPerImage(x.results);
-      if (!filtered.length) excluded.push({ fileName: x.fileName, reason: "low_confidence" });
-      return { fileName: x.fileName, results: filtered.length ? filtered : [] };
+      const { kept, droppedForLowConf } = filterPerImageWithFallback(x.results);
+      if (kept.length === 0) {
+        excluded.push({ fileName: x.fileName, reason: "low_confidence" });
+      } else if (droppedForLowConf && (kept[0].confidence ?? 0) < LOW_CONF_REASON) {
+        // añadimos razón explícita si el top quedó por debajo de LOW_CONF_REASON
+        excluded.push({ fileName: x.fileName, reason: "low_confidence" });
+      }
+      return { fileName: x.fileName, results: kept };
     });
 
-    // Consenso
+    // Consenso: si lo borra todo, conservamos la imagen con su top-1 (no dejamos “vacío”)
     if (perImage.length >= 2) {
       const keep = new Set(consensusAcrossImages(perImage));
-      perImage = perImage.map(img => {
+      const after = perImage.map(img => {
         const kept = img.results.filter(r => keep.has(r.name.toLowerCase()));
-        if (!kept.length && img.results.length) excluded.push({ fileName: img.fileName, reason: "no_consensus" });
+        if (!kept.length && img.results.length) {
+          // sin consenso: dejamos el top-1 para no perder la hipótesis principal
+          excluded.push({ fileName: img.fileName, reason: "no_consensus" });
+          const top1 = [...img.results].sort((a,b)=> (b.confidence ?? 0)-(a.confidence ?? 0) || b.pct-a.pct)[0];
+          return { ...img, results: normalizeTo100([top1]) };
+        }
         return kept.length ? { ...img, results: normalizeTo100(kept) } : { ...img, results: [] };
       });
+      perImage = after;
     }
 
-    // Relleno si quedó vacío
+    // Si alguna quedó vacía (muy raro tras el fallback), marcamos “Indeterminado”
     perImage = perImage.map(img =>
       img.results.length ? img : { ...img, results: [{ name: "Indeterminado", pct: 100, confidence: 0.2 }] },
     );
@@ -309,7 +357,6 @@ export async function POST(req: Request) {
     const global = computeGlobal(perImage);
 
     // --------- Interpretación breve (geología/economía/advertencias)
-    // Se construye un texto corto sin otra llamada al modelo para evitar latencia:
     const names = global.map(g => g.name.toLowerCase());
     const hasCuSec = names.some(n => /(malaquita|azurita|crisocola|cuprita|bornita|calcopirita)/i.test(n));
     const hasFeOx = names.some(n => /(limonita|goethita|hematita)/i.test(n));
