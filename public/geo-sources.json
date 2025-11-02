@@ -1,0 +1,291 @@
+{
+  "version": 1,
+  "updated": "2025-11-01",
+  "countries": [
+    {
+      "iso": "PE",
+      "name": "Perú",
+      "provider": "INGEMMET / GEOCATMIN",
+      "portal": "https://www.ingemmet.gob.pe/web/guest/geocatmin",
+      "ogc": {
+        "wms": [
+          {
+            "name": "Geología 1:1M",
+            "url": "http://geocatmin.ingemmet.gob.pe/arcgis/services/SERV_GEOLOGIA/MapServer/WMSServer?",
+            "caps": "GetCapabilities",
+            "notes": "Mapa geológico del Perú: litología, contactos, pliegues."
+          },
+          {
+            "name": "Fallas geológicas",
+            "url": "https://geocatmin.ingemmet.gob.pe/arcgis/services/SERV_GEOLOGIA_FALLAS/MapServer/WMSServer?",
+            "caps": "GetCapabilities",
+            "notes": "Fallas activas e inferidas (1M, 100k, 50k)."
+          },
+          {
+            "name": "Depósitos / Ocurrencias",
+            "url": "https://geocatmin.ingemmet.gob.pe/arcgis/services/SERV_OCURRENCIA_MINERAL/MapServer/WMSServer?",
+            "caps": "GetCapabilities",
+            "notes": "Minas, prospectos y ocurrencias."
+          }
+        ],
+        "wfs": []
+      }
+    },
+    {
+      "iso": "CL",
+      "name": "Chile",
+      "provider": "SERNAGEOMIN",
+      "portal": "https://portalgeomin.sernageomin.cl/",
+      "ogc": {
+        "wms": [
+          {
+            "name": "Geología base 1:1M",
+            "url": "https://sdngsig.sernageomin.cl/gissdng/services/Geoportal/GeologiaBase/MapServer/WMSServer?",
+            "caps": "GetCapabilities",
+            "notes": "Litología, fallas, pliegues."
+          }
+        ],
+        "wfs": []
+      }
+    },
+    {
+      "iso": "AR",
+      "name": "Argentina",
+      "provider": "SEGEMAR (SIGAM)",
+      "portal": "https://sigam.segemar.gov.ar/wordpress/geoservicios/",
+      "ogc": {
+        "wms": [
+          {
+            "name": "SIGAM WMS",
+            "url": "https://sigam.segemar.gov.ar/geoserver217/wms?request=GetCapabilities",
+            "caps": "GetCapabilities",
+            "notes": "Cartografía geológica, depósitos, riesgos, geofísica."
+          }
+        ],
+        "wfs": [
+          {
+            "name": "SIGAM WFS",
+            "url": "https://sigam.segemar.gov.ar/geoserver217/wfs?request=GetCapabilities",
+            "caps": "GetCapabilities",
+            "notes": "Unidades, fallas, yacimientos (vector)."
+          }
+        ]
+      }
+    },
+    {
+      "iso": "CO",
+      "name": "Colombia",
+      "provider": "Servicio Geológico Colombiano (SGC)",
+      "portal": "https://www2.sgc.gov.co/sgc/mapas/Geoservicio/Paginas/geoservicios.aspx",
+      "ogc": {
+        "wms": [
+          {
+            "name": "Atlas geológico nacional",
+            "url": "https://srvags.sgc.gov.co/arcgis/services/Atlas_Geologico_Colombiano/Atlas_Geologico_Colombia/MapServer/WMSServer",
+            "caps": "GetCapabilities",
+            "notes": "Geología regional."
+          }
+        ],
+        "wfs": [
+          {
+            "name": "Mapa geológico 2015 (WFS)",
+            "url": "https://srvags.sgc.gov.co/arcgis/services/Mapa_Geologico_Colombia_2015/Mapa_Geologico_Colombia_2015/MapServer/WFSServer?",
+            "caps": "GetCapabilities",
+            "notes": "Unidades litológicas (vector)."
+          }
+        ]
+      }
+    },
+    {
+      "iso": "BR",
+      "name": "Brasil",
+      "provider": "CPRM / SGB (GeoSGB)",
+      "portal": "https://geosgb.sgb.gov.br/",
+      "ogc": {
+        "wms": [
+          {
+            "name": "GeoSGB WMS Geología 1:1M",
+            "url": "https://geosgb.sgb.gov.br/geoserver/geologia/ows?SERVICE=WMS&REQUEST=GetCapabilities",
+            "caps": "GetCapabilities",
+            "notes": "Mapa geológico nacional."
+          }
+        ],
+        "wfs": [
+          {
+            "name": "GeoSGB WFS Geología",
+            "url": "https://geosgb.sgb.gov.br/geoserver/geologia/ows?SERVICE=WFS&REQUEST=GetCapabilities",
+            "caps": "GetCapabilities",
+            "notes": "Descarga vectorial."
+          }
+        ]
+      }
+    },
+    {
+      "iso": "US",
+      "name": "Estados Unidos",
+      "provider": "USGS",
+      "portal": "https://apps.nationalmap.gov/services/",
+      "ogc": {
+        "wms": [
+          {
+            "name": "Catálogo USGS WMS",
+            "url": "https://apps.nationalmap.gov/services/",
+            "caps": "Directory",
+            "notes": "Listados de servicios WMS (base + geología)."
+          }
+        ],
+        "wfs": []
+      }
+    },
+    {
+      "iso": "CA",
+      "name": "Canadá",
+      "provider": "Geological Survey of Canada (NRCan)",
+      "portal": "https://geoscan.nrcan.gc.ca/",
+      "ogc": {
+        "wms": [
+          {
+            "name": "GeoScience Map WMS",
+            "url": "https://maps.canada.ca/geology/wms?SERVICE=WMS&REQUEST=GetCapabilities",
+            "caps": "GetCapabilities",
+            "notes": "Geología nacional, rocas, fallas, estructuras."
+          }
+        ],
+        "wfs": []
+      }
+    },
+    {
+      "iso": "FR",
+      "name": "Francia",
+      "provider": "BRGM / CGMW",
+      "portal": "https://infoterre.brgm.fr/",
+      "ogc": {
+        "wms": [
+          {
+            "name": "CGMW Bedrock & Structural Geology",
+            "url": "http://mapsref.brgm.fr/wxs/1GG/CGMW_Bedrock_and_Structural_Geology?SERVICE=WMS&REQUEST=GetCapabilities",
+            "caps": "GetCapabilities",
+            "notes": "Geología estructural (Europa/Francia)."
+          }
+        ],
+        "wfs": []
+      }
+    },
+    {
+      "iso": "DE",
+      "name": "Alemania",
+      "provider": "BGR",
+      "portal": "https://www.bgr.bund.de/DE/Home/homepage_node.html",
+      "ogc": {
+        "wms": [
+          {
+            "name": "Geologische Karte Deutschland 1:1M",
+            "url": "https://services.bgr.de/wms/bgr/geologie1000/?SERVICE=WMS&REQUEST=GetCapabilities",
+            "caps": "GetCapabilities",
+            "notes": "Mapa geológico nacional."
+          }
+        ],
+        "wfs": []
+      }
+    },
+    {
+      "iso": "SE",
+      "name": "Suecia",
+      "provider": "SGU",
+      "portal": "https://www.sgu.se/en/",
+      "ogc": {
+        "wms": [
+          {
+            "name": "SGU Surface Geology WMS",
+            "url": "https://resource.sgu.se/service/wms/sgu/surfacegeology?SERVICE=WMS&REQUEST=GetCapabilities",
+            "caps": "GetCapabilities",
+            "notes": "Geología superficial, suelos, estructura."
+          }
+        ],
+        "wfs": []
+      }
+    },
+    {
+      "iso": "ZA",
+      "name": "Sudáfrica",
+      "provider": "Council for Geoscience (CGS)",
+      "portal": "https://portal.geoscience.org.za/",
+      "ogc": {
+        "wms": [
+          {
+            "name": "CGS National Geology",
+            "url": "https://portal.geoscience.org.za/arcgis/services/National_Geology/MapServer/WMSServer?",
+            "caps": "GetCapabilities",
+            "notes": "Geología nacional; PGM."
+          }
+        ],
+        "wfs": []
+      }
+    },
+    {
+      "iso": "CN",
+      "name": "China",
+      "provider": "China Geological Survey (CGS)",
+      "portal": "http://www.cgs.gov.cn/",
+      "ogc": {
+        "wms": [
+          {
+            "name": "CGS WMS Geology",
+            "url": "http://geoservice.cgs.gov.cn/geoserver/geology/wms?SERVICE=WMS&REQUEST=GetCapabilities",
+            "caps": "GetCapabilities",
+            "notes": "Geología nacional, recursos y tectónica."
+          }
+        ],
+        "wfs": []
+      }
+    },
+    {
+      "iso": "AU",
+      "name": "Australia",
+      "provider": "Geoscience Australia",
+      "portal": "https://www.ga.gov.au/",
+      "ogc": {
+        "wms": [
+          {
+            "name": "Surface Geology (REST/MapServer)",
+            "url": "https://services.ga.gov.au/gis/rest/services/GA_Surface_Geology/MapServer",
+            "caps": "ESRI",
+            "notes": "WMS via capabilities del servicio REST."
+          }
+        ],
+        "wfs": [
+          {
+            "name": "GA GeoServer WFS",
+            "url": "http://services.ga.gov.au/geoserver/ows?service=WFS&version=1.0.0&request=GetCapabilities",
+            "caps": "GetCapabilities",
+            "notes": "Datos vectoriales nacionales."
+          }
+        ]
+      }
+    },
+    {
+      "iso": "GLOBAL",
+      "name": "Global",
+      "provider": "OneGeology",
+      "portal": "https://portal.onegeology.org/OnegeologyGlobal/",
+      "ogc": {
+        "wms": [
+          {
+            "name": "OneGeology portal (catálogo)",
+            "url": "https://portal.onegeology.org/OnegeologyGlobal/",
+            "caps": "Catalog",
+            "notes": "Copiar endpoints por país desde el visor."
+          }
+        ],
+        "wfs": []
+      }
+    },
+    {
+      "iso": "REGIONAL",
+      "name": "Regional (UE/ALC)",
+      "provider": "MDNP",
+      "portal": "https://mineraldevelopmentnetworkplatform.org/",
+      "ogc": { "wms": [], "wfs": [] }
+    }
+  ]
+}

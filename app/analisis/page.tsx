@@ -4,6 +4,7 @@ import React from "react";
 import Link from "next/link";
 import CameraCapture, { type CapturedPhoto } from "../../components/CameraCapture";
 import GeoCapture, { type GeoResult } from "../../components/GeoCapture";
+import GeoSourcesPanel from "../../components/GeoSourcesPanel"; // ⬅️ NUEVO: import del panel de fuentes geoespaciales
 
 import {
   buildMineralPdf,
@@ -157,7 +158,7 @@ export default function AnalisisPage() {
     Ag: 0.90,
   });
 
-  // ======= PERSISTENCIA EN LOCALSTORAGE (Opción A: simple con useEffect) =======
+  // ======= PERSISTENCIA EN LOCALSTORAGE =======
   React.useEffect(() => {
     try {
       const c = localStorage.getItem("mq_currency");
@@ -280,19 +281,16 @@ export default function AnalisisPage() {
         Plomo: { recovery: adj?.Plomo?.recovery ?? 0.90, payable: adj?.Plomo?.payable ?? 0.90 },
       };
 
-      // Mapeo de moneda a las aceptadas por el PDF económico:
       const econCurrency = (currency === "PEN" ? "PEN" : "USD") as "USD" | "PEN";
 
-      // Overrides para economía (precios y payables por commodity)
       const econOverrides = {
         currency: econCurrency,
         prices: { ...prices },       // { Cu, Zn, Pb, Au, Ag }
         payables: { ...payables },   // { Cu, Zn, Pb, Au, Ag }
       };
 
-      // Llamada flexible para ambas variantes de buildReportPdfPlus
       const doc = await (buildReportPdfPlus as any)({
-        // ==== Firma "vieja" compatible ====
+        // ---- Firma “vieja” compatible ----
         appName: "MinQuant_WSCA",
         sampleCode,
         results: globalResults,
@@ -312,7 +310,7 @@ export default function AnalisisPage() {
         interpretation: interpretation || undefined,
         excluded,
 
-        // ==== Firma "nueva" propuesta ====
+        // ---- Firma “nueva” propuesta ----
         mixGlobal: globalResults?.map(r => ({ name: r.name, pct: r.pct })) ?? [],
         byImage: perImage?.map(p => ({
           filename: p.fileName,
@@ -327,7 +325,7 @@ export default function AnalisisPage() {
           note: "Advertencia: Informe preliminar, referencial; requiere validación con ensayo químico.",
         },
 
-        // ==== Overrides explícitos por si tu versión los lee así ====
+        // ---- Overrides explícitos ----
         priceOverrides: prices,
         payableOverrides: payables,
         econ: econOverrides,
@@ -508,6 +506,9 @@ export default function AnalisisPage() {
           )}
 
           <GeoCapture onChange={setGeo} />
+
+          {/* ⬇️ NUEVO: Panel de fuentes geoespaciales */}
+          <GeoSourcesPanel />
 
           <button
             onClick={handleAnalyze}
