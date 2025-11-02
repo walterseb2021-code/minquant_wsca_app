@@ -4,7 +4,7 @@ import React from "react";
 import Link from "next/link";
 import CameraCapture, { type CapturedPhoto } from "../../components/CameraCapture";
 import GeoCapture, { type GeoResult } from "../../components/GeoCapture";
-import GeoSourcesPanel from "../../components/GeoSourcesPanel"; // ⬅️ NUEVO: import del panel de fuentes geoespaciales
+import GeoSourcesPanel from "../../components/GeoSourcesPanel"; // Panel de fuentes geoespaciales
 
 import {
   buildMineralPdf,
@@ -144,11 +144,11 @@ export default function AnalisisPage() {
 
   // **NUEVO**: Precios y payables por commodity (para PDF Económico)
   const [prices, setPrices] = React.useState<Record<"Cu" | "Zn" | "Pb" | "Au" | "Ag", number>>({
-    Cu: 9.0,  // USD por kg/t (referencial)
+    Cu: 9.0,
     Zn: 2.7,
     Pb: 2.1,
-    Au: 75.0, // USD por g/t (referencial)
-    Ag: 0.90, // USD por g/t (referencial)
+    Au: 75.0,
+    Ag: 0.90,
   });
   const [payables, setPayables] = React.useState<Record<"Cu" | "Zn" | "Pb" | "Au" | "Ag", number>>({
     Cu: 0.85,
@@ -164,8 +164,7 @@ export default function AnalisisPage() {
       const c = localStorage.getItem("mq_currency");
       const p = localStorage.getItem("mq_prices");
       const pa = localStorage.getItem("mq_payables");
-      const adjStr = localStorage.getItem("mq_process_adj"); // opcional
-
+      const adjStr = localStorage.getItem("mq_process_adj");
       if (c) setCurrency(c as any);
       if (p) setPrices(prev => ({ ...prev, ...JSON.parse(p) }));
       if (pa) setPayables(prev => ({ ...prev, ...JSON.parse(pa) }));
@@ -174,21 +173,10 @@ export default function AnalisisPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  React.useEffect(() => {
-    try { localStorage.setItem("mq_currency", String(currency)); } catch {}
-  }, [currency]);
-
-  React.useEffect(() => {
-    try { localStorage.setItem("mq_prices", JSON.stringify(prices)); } catch {}
-  }, [prices]);
-
-  React.useEffect(() => {
-    try { localStorage.setItem("mq_payables", JSON.stringify(payables)); } catch {}
-  }, [payables]);
-
-  React.useEffect(() => {
-    try { localStorage.setItem("mq_process_adj", JSON.stringify(adj)); } catch {}
-  }, [adj]);
+  React.useEffect(() => { try { localStorage.setItem("mq_currency", String(currency)); } catch {} }, [currency]);
+  React.useEffect(() => { try { localStorage.setItem("mq_prices", JSON.stringify(prices)); } catch {} }, [prices]);
+  React.useEffect(() => { try { localStorage.setItem("mq_payables", JSON.stringify(payables)); } catch {} }, [payables]);
+  React.useEffect(() => { try { localStorage.setItem("mq_process_adj", JSON.stringify(adj)); } catch {} }, [adj]);
   // ======= FIN PERSISTENCIA =======
 
   // Resultados
@@ -211,7 +199,7 @@ export default function AnalisisPage() {
   // Handlers de UI
   const setNum = (metal: "Cobre" | "Zinc" | "Plomo", field: "recovery" | "payable", val: string) => {
     const pct = Math.max(0, Math.min(100, Number(val)));
-    setAdj((prev) => ({
+    setAdj(prev => ({
       ...prev,
       [metal]: { ...prev[metal], [field]: isFinite(pct) ? pct / 100 : prev[metal][field] },
     }));
@@ -255,7 +243,6 @@ export default function AnalisisPage() {
       const results = (j.global ?? []) as MineralResult[];
       setGlobalResults(results);
 
-      // Si el backend NO envía interpretación, la generamos en cliente
       const inter: Interpretation | null = j?.interpretation ?? buildInterpretationClient(results);
       setInterpretation(inter);
     } catch (e: any) {
@@ -277,16 +264,15 @@ export default function AnalisisPage() {
     try {
       const safeAdj = {
         Cobre: { recovery: adj?.Cobre?.recovery ?? 0.85, payable: adj?.Cobre?.payable ?? 0.96 },
-        Zinc: { recovery: adj?.Zinc?.recovery ?? 0.85, payable: adj?.Zinc?.payable ?? 0.96 },
+        Zinc:  { recovery: adj?.Zinc?.recovery  ?? 0.85, payable: adj?.Zinc?.payable  ?? 0.96 },
         Plomo: { recovery: adj?.Plomo?.recovery ?? 0.90, payable: adj?.Plomo?.payable ?? 0.90 },
       };
 
       const econCurrency = (currency === "PEN" ? "PEN" : "USD") as "USD" | "PEN";
-
       const econOverrides = {
         currency: econCurrency,
-        prices: { ...prices },       // { Cu, Zn, Pb, Au, Ag }
-        payables: { ...payables },   // { Cu, Zn, Pb, Au, Ag }
+        prices:  { ...prices },
+        payables: { ...payables },
       };
 
       const doc = await (buildReportPdfPlus as any)({
@@ -298,12 +284,7 @@ export default function AnalisisPage() {
         imageDataUrls: imagesDataURL,
         generatedAt: new Date().toISOString(),
         location: geo?.point
-          ? {
-              lat: geo.point.lat,
-              lng: geo.point.lng,
-              accuracy: geo.point.accuracy,
-              address: geo.address?.formatted,
-            }
+          ? { lat: geo.point.lat, lng: geo.point.lng, accuracy: geo.point.accuracy, address: geo.address?.formatted }
           : undefined,
         embedStaticMap: true,
         recoveryPayables: safeAdj,
@@ -326,7 +307,7 @@ export default function AnalisisPage() {
         },
 
         // ---- Overrides explícitos ----
-        priceOverrides: prices,
+        priceOverrides:   prices,
         payableOverrides: payables,
         econ: econOverrides,
       });
@@ -403,13 +384,13 @@ export default function AnalisisPage() {
             <div>
               <label className="text-sm text-gray-700">Código de muestra</label>
               <input value={sampleCode} onChange={(e) => setSampleCode(e.target.value)}
-                className="mt-1 border rounded px-3 py-2" />
+                     className="mt-1 border rounded px-3 py-2" />
             </div>
             <div>
               <label className="text-sm text-gray-700">Moneda</label>
               <select value={currency}
-                onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
-                className="mt-1 border rounded px-3 py-2">
+                      onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
+                      className="mt-1 border rounded px-3 py-2">
                 <option value="USD">USD</option>
                 <option value="PEN">PEN</option>
                 <option value="EUR">EUR</option>
@@ -427,16 +408,16 @@ export default function AnalisisPage() {
                   <div className="flex items-center gap-2">
                     <label className="text-xs w-12">Rec %</label>
                     <input type="number" min={0} max={100} step={1}
-                      value={Math.round((adj[metal]?.recovery ?? 0) * 100)}
-                      onChange={(e) => setNum(metal, "recovery", e.target.value)}
-                      className="border rounded px-2 py-1 w-14 text-sm" />
+                           value={Math.round((adj[metal]?.recovery ?? 0) * 100)}
+                           onChange={(e) => setNum(metal, "recovery", e.target.value)}
+                           className="border rounded px-2 py-1 w-14 text-sm" />
                   </div>
                   <div className="flex items-center gap-2 mt-2">
                     <label className="text-xs w-12">Pay %</label>
                     <input type="number" min={0} max={100} step={1}
-                      value={Math.round((adj[metal]?.payable ?? 0) * 100)}
-                      onChange={(e) => setNum(metal, "payable", e.target.value)}
-                      className="border rounded px-2 py-1 w-14 text-sm" />
+                           value={Math.round((adj[metal]?.payable ?? 0) * 100)}
+                           onChange={(e) => setNum(metal, "payable", e.target.value)}
+                           className="border rounded px-2 py-1 w-14 text-sm" />
                   </div>
                 </div>
               ))}
@@ -447,14 +428,15 @@ export default function AnalisisPage() {
           <div className="border rounded-lg p-3 bg-gray-50 mb-4">
             <div className="font-semibold mb-2">Economía: Precios y Payables por commodity</div>
             <p className="text-xs text-gray-600 mb-2">
-              Edita el <b>precio</b> (por unidad mostrada en PDF) y el <b>payable</b> (0–1) para cada commodity. Se reflejarán en la tabla económica del PDF general.
+              Edita el <b>precio</b> (por unidad mostrada en PDF) y el <b>payable</b> (0–1) para cada commodity.
+              Se reflejarán en la tabla económica del PDF general.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {(["Cu","Zn","Pb","Au","Ag"] as const).map(code => (
                 <div key={code} className="border rounded p-2 bg-white">
-                  <div className="text-sm font-medium mb-2">{
-                    {Cu:"Cobre (Cu)", Zn:"Zinc (Zn)", Pb:"Plomo (Pb)", Au:"Oro (Au)", Ag:"Plata (Ag)"}[code]
-                  }</div>
+                  <div className="text-sm font-medium mb-2">
+                    {{Cu:"Cobre (Cu)", Zn:"Zinc (Zn)", Pb:"Plomo (Pb)", Au:"Oro (Au)", Ag:"Plata (Ag)"}[code]}
+                  </div>
                   <div className="flex items-center gap-2">
                     <label className="text-xs w-16">Precio</label>
                     <input
@@ -482,7 +464,8 @@ export default function AnalisisPage() {
               ))}
             </div>
             <p className="text-[11px] text-gray-500 mt-2">
-              Nota: Si escoges <b>EUR</b>, internamente se usará USD para el cálculo económico (puedes cambiarlo a PEN/USD si prefieres).
+              Nota: Si escoges <b>EUR</b>, internamente se usará USD para el cálculo económico (puedes
+              cambiarlo a PEN/USD si prefieres).
             </p>
           </div>
 
@@ -507,7 +490,7 @@ export default function AnalisisPage() {
 
           <GeoCapture onChange={setGeo} />
 
-          {/* ⬇️ NUEVO: Panel de fuentes geoespaciales */}
+          {/* Panel de fuentes geoespaciales */}
           <GeoSourcesPanel />
 
           <button
