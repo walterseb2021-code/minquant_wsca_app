@@ -1,86 +1,161 @@
 "use client";
-import React, { useEffect, useState } from "react";
-import { getAvailableSources, type GeoSource } from "../geo/registry";
+
+import React from "react";
+
+/** Tipos mínimos que usamos del catálogo público (public/geo-sources.json) */
+type Layer = {
+  id: string;
+  title: string;
+  service: "WMS" | "WFS" | "XYZ" | "Other";
+  url: string;
+  notes?: string;
+};
+
+type CountryCatalog = {
+  code: string;   // "PE"
+  name: string;   // "Perú"
+  layers: Layer[];
+  notes?: string[];
+};
+
+type CatalogJSON = {
+  updatedAt?: string;
+  countries: CountryCatalog[];
+};
+
+function copy(text: string) {
+  try {
+    navigator.clipboard?.writeText(text);
+    alert("Copiado al portapapeles.");
+  } catch {
+    // Fallback simple
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    alert("Copiado al portapapeles.");
+  }
+}
 
 export default function GeoSourcesPanel() {
-  const [country, setCountry] = useState<string>("auto");
-  const [sources, setSources] = useState<GeoSource[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [catalog, setCatalog] = React.useState<CatalogJSON | null>(null);
+  const [countryCode, setCountryCode] = React.useState<string>("");
 
-  // Detección inicial de país según IP
-  useEffect(() => {
+  // Cargar catálogo desde /public
+  React.useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("https://ipapi.co/json/");
-        const j = await res.json();
-        const cc = j?.country_name || "Desconocido";
-        setCountry(cc);
-        const src = await getAvailableSources(cc);
-        setSources(src);
-      } catch {
-        setCountry("Desconocido");
+        setLoading(true);
+        setError(null);
+        const resp = await fetch("/geo-sources.json", { cache: "no-store" });
+        if (!resp.ok) throw new Error("No se pudo leer geo-sources.json");
+        const json = (await resp.json()) as CatalogJSON;
+        setCatalog(json);
+
+        // seleccionar Perú por defecto si existe; si no, el primero
+        const hasPE = json.countries.find((c) => c.code === "PE");
+        setCountryCode(hasPE ? "PE" : (json.countries[0]?.code ?? ""));
+      } catch (e: any) {
+        setError(e?.message || "Error cargando catálogo geoespacial");
+      } finally {
+        setLoading(false);
       }
     })();
   }, []);
 
-  async function handleCountryChange(e: React.ChangeEvent<HTMLSelectElement>) {
-    const c = e.target.value;
-    setCountry(c);
-    setLoading(true);
-    const src = await getAvailableSources(c);
-    setSources(src);
-    setLoading(false);
-  }
+  const country = React.useMemo(
+    () => catalog?.countries.find((c) => c.code === countryCode) || null,
+    [catalog, countryCode]
+  );
 
   return (
-    <div className="border rounded-lg p-3 bg-gray-50 mt-4">
-      <div className="font-semibold mb-2">🌎 Fuentes geoespaciales disponibles</div>
-      <div className="flex flex-wrap items-center gap-2 mb-3">
-        <label className="text-sm text-gray-600">País:</label>
-        <select
-          value={country}
-          onChange={handleCountryChange}
-          className="border rounded px-2 py-1 text-sm"
-        >
-          <option value="auto">Auto (IP)</option>
-          <option>Perú</option>
-          <option>Chile</option>
-          <option>Argentina</option>
-          <option>Colombia</option>
-          <option>Brasil</option>
-          <option>EE.UU.</option>
-          <option>Canadá</option>
-          <option>Francia</option>
-          <option>Alemania</option>
-          <option>Suecia</option>
-          <option>Sudáfrica</option>
-          <option>China</option>
-          <option>Australia</option>
-        </select>
-        {loading && <span className="text-xs text-gray-500">Cargando…</span>}
+    <div className="border rounded-lg p-3 bg-white mt-4">
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold">Fuentes geoespaciales</h3>
+        {catalog?.updatedAt && (
+          <span className="text-xs text-gray-500">Catálogo: {catalog.updatedAt}</span>
+        )}
       </div>
 
-      {sources.length > 0 ? (
-        <ul className="text-sm space-y-1">
-          {sources.map((s, i) => (
-            <li key={i} className="border rounded p-2 bg-white">
-              <b>{s.name}</b> — {s.type}
-              <br />
-              <a
-                href={s.url}
-                target="_blank"
-                rel="noreferrer"
-                className="text-blue-600 underline text-xs"
-              >
-                {s.url}
-              </a>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="text-sm text-gray-500">
-          No hay fuentes registradas para este país o aún no se cargaron.
+      {/* Estados de carga/errores */}
+      {loading && <p className="text-sm text-gray-600 mt-2">Cargando catálogo…</p>}
+      {error && (
+        <p className="text-sm text-red-600 mt-2">
+          {error}. Verifica que <code>public/geo-sources.json</code> exista en producción.
         </p>
+      )}
+
+      {/* Selector de país */}
+      {!loading && !error && catalog && (
+        <>
+          <div className="mt-3">
+            <label className="text-sm text-gray-700">País</label>
+            <select
+              value={countryCode}
+              onChange={(e) => setCountryCode(e.target.value)}
+              className="mt-1 border rounded px-3 py-2">
+              {catalog.countries.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.name} ({c.code})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Notas del país */}
+          {country?.notes && country.notes.length > 0 && (
+            <div className="mt-3 text-xs text-gray-600">
+              {country.notes.map((n, i) => (
+                <div key={i}>• {n}</div>
+              ))}
+            </div>
+          )}
+
+          {/* Lista de capas */}
+          <div className="mt-4">
+            <h4 className="font-medium mb-2">Capas disponibles</h4>
+            {country && country.layers.length > 0 ? (
+              <ul className="space-y-2">
+                {country.layers.map((ly) => (
+                  <li key={ly.id} className="border rounded p-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="font-medium text-sm">{ly.title}</div>
+                        <div className="text-[11px] text-gray-500">
+                          {ly.service} • <code className="break-all">{ly.url}</code>
+                        </div>
+                        {ly.notes && (
+                          <div className="text-[11px] text-gray-600 mt-1">{ly.notes}</div>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => copy(ly.url)}
+                          className="px-2 py-1 bg-blue-600 text-white rounded text-xs">
+                          Copiar URL
+                        </button>
+                        {/* Enlace de prueba en nueva pestaña */}
+                        <a
+                          href={ly.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-2 py-1 bg-gray-200 rounded text-xs">
+                          Abrir
+                        </a>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-gray-500">No hay capas registradas para este país.</p>
+            )}
+          </div>
+        </>
       )}
     </div>
   );
