@@ -34,6 +34,8 @@ const DEFAULTS_BY_COMMODITY: Record<string, { recovery: number; payable: number 
 /* =========================================================================
    HELPERS GENERALES
    ========================================================================= */
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
 async function blobToDataURL(b: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const fr = new FileReader();
@@ -250,6 +252,8 @@ type BuildReportOptions = {
   embedStaticMap?: boolean;
   currency?: CurrencyCode;
   recoveryPayables?: CommodityAdjustments; // NUEVO
+  // Nuevo: nearbySources (opcional). Estructura libre esperada: array de objetos con { id, name, commodity?, latitude?, longitude?, distance_m?, source?, source_url?, raw? }
+  nearbySources?: any[];
 };
 
 export async function buildReportPdf(opts: BuildReportOptions) {
@@ -264,6 +268,7 @@ export async function buildReportPdf(opts: BuildReportOptions) {
     embedStaticMap,
     currency = "USD",
     recoveryPayables = {},
+    nearbySources = [],
   } = opts;
 
   const doc = new jsPDF({ unit: "pt", format: "a4" });
@@ -529,6 +534,76 @@ export async function buildReportPdf(opts: BuildReportOptions) {
       });
     }
   } catch {}
+
+  // ===== NUEVA SECCIÓN: Yacimientos / Canteras cercanas =====
+  try {
+    doc.addPage();
+    let yN = 56;
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(TITLE_COLOR);
+    doc.setFontSize(16);
+    doc.text("Yacimientos / Canteras cercanas", marginX, yN);
+    yN += 14;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor("#374151");
+    doc.text(
+      "Listado de features geoespaciales detectados alrededor de la ubicación (origen: OpenStreetMap / Geoapify u otros).",
+      marginX,
+      yN,
+    );
+    yN += 12;
+
+    // Preparar cuerpo de la tabla
+    const nearby = Array.isArray(nearbySources) ? nearbySources : [];
+    const body = nearby.map((s: any) => {
+      const name = s.name || s.address || "Sin nombre";
+      const type = s.raw?.tags ? Object.values(s.raw.tags).join(", ") : (s.type || "");
+      const comm = Array.isArray(s.commodity) ? s.commodity.slice(0, 3).join(", ") : (s.commodity || "");
+      const distKm = typeof s.distance_m === "number" ? round2(s.distance_m / 1000) : (s.distance_km ? round2(s.distance_km) : "");
+      const distStr = distKm === "" ? "" : `${distKm} km`;
+      const lat = typeof s.latitude === "number" ? s.latitude.toFixed(6) : (s.lat ? Number(s.lat).toFixed(6) : "");
+      const lon = typeof s.longitude === "number" ? s.longitude.toFixed(6) : (s.lon ? Number(s.lon).toFixed(6) : "");
+      const src = s.source || (s.raw && (s.raw.provider || s.raw.source)) || s.source_url || "";
+      const shortSrc = typeof src === "string" && src.length > 48 ? src.slice(0, 45) + "..." : src || "";
+
+      return [name, type, comm, distStr, lat, lon, shortSrc];
+    });
+
+    // Si no hay items, añadimos fila vacía (para que la tabla aparezca con cabeceras)
+    if (body.length === 0) {
+      body.push(["—", "—", "—", "—", "—", "—", "—"]);
+    }
+
+    autoTable(doc, {
+      startY: yN + 6,
+      head: [["Nombre", "Tipo / Tags", "Commodities", "Dist", "Lat", "Lon", "Fuente / URL"]],
+      body,
+      styles: { fontSize: 9, cellPadding: 4 },
+      headStyles: { fillColor: LIGHT as any, textColor: DARK as any },
+      margin: { left: marginX, right: marginX },
+      columnStyles: {
+        0: { cellWidth: 120 },
+        1: { cellWidth: 90 },
+        2: { cellWidth: 80 },
+        3: { cellWidth: 48 },
+        4: { cellWidth: 64 },
+        5: { cellWidth: 64 },
+        6: { cellWidth: 120 },
+      },
+      theme: "grid",
+    });
+
+  } catch (e) {
+    // No bloquear el PDF por esta tabla; mostramos nota
+    console.warn("Error generando tabla de yacimientos:", e);
+    try {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.text("Nota: No fue posible renderizar la tabla de yacimientos.", marginX, (doc as any).lastAutoTable?.finalY + 12 || 56);
+    } catch {}
+  }
 
   return doc;
 }

@@ -46,22 +46,33 @@ export type BuildReportOptions = {
   lng?: number;
   dateISO?: string;
   econ?: EconOverrides;
+  // Nuevo: nearbySources opcional — array de objetos { id, name, commodity?, latitude, longitude, distance_m?, source?, source_url?, raw? }
+  nearbySources?: Array<any>;
 };
 
 /** Utilidades */
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const toPct = (n: number, digits = 2) => `${n.toFixed(digits)} %`;
 
-/** Limpia caracteres problemáticos (• y saltos) */
+/** Normaliza y limpia texto para minimizar caracteres problemáticos (mejora UTF) */
 function sanitizeText(s: string): string {
-  return s
-    .replace(/\u2022/g, "-")
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .trim();
+  if (!s) return "";
+  try {
+    // Normalizar a NFC para evitar problemas con combinaciones de acentos
+    let out = s.normalize && s.normalize("NFC") ? s.normalize("NFC") : s;
+    // Reemplaza bullets raros y algunos caracteres no imprimibles
+    out = out.replace(/\u2022/g, "-").replace(/\uFFFD/g, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    // Quitar caracteres de control excepto \n\t
+    out = out.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+    return out.trim();
+  } catch {
+    return s.replace(/\u2022/g, "-").trim();
+  }
 }
 
-/** Obtiene imagen de mapa desde tu API interna (sin CORS) */
+/** Obtiene imagen de mapa desde tu API interna (sin CORS).
+ * Nota: en entornos server-side (SSR) puede requerir absoluta. Aquí asumimos que la llamada funciona como antes.
+ */
 async function fetchStaticMap(lat: number, lng: number, width = 900, height = 380): Promise<string | null> {
   try {
     const url = `/api/staticmap?lat=${lat}&lng=${lng}&zoom=14&size=${width}x${height}`;
@@ -115,7 +126,6 @@ function interpretMix(mix: GlobalMix): string {
 
   const lines: string[] = [];
 
-  // Dominancias (umbrales suaves)
   if (w.Cu >= 15) {
     const dominio = w.Cu >= 40 ? "Dominio cuprífero" : "Signo cuprífero";
     lines.push(`• ${dominio} (≈ ${round2(w.Cu)} % del ensamblaje): especies carbonato/óxido (malaquita/azurita/crisocola) sugieren zona oxidada; evaluar lixiviación o beneficio oxidado.`);
@@ -143,7 +153,6 @@ function interpretMix(mix: GlobalMix): string {
     lines.push("• Ensamble sin indicadores metálicos dominantes. Sugerido muestreo adicional y verificación analítica.");
   }
 
-  // Advertencia fija (sanitizada)
   lines.push("• Estimación visual asistida por IA. Confirmar con ensayo químico (Au/Ag: fuego/AA; Cu/Pb/Zn: ICP/AA).");
   return sanitizeText(lines.join("\n"));
 }
@@ -161,7 +170,6 @@ function buildEconomics(mix: GlobalMix, overrides?: EconOverrides) {
 
   const commodities = BASE_COMMODITIES.filter(c => (c.enabled || present.has(c.code)));
 
-  // Tenores heurísticos (idénticos a versión previa)
   function estimateTenor(code: Commodity["code"]): number {
     const rel = mix.filter(m => mineralToMetals(m.name).includes(code)).reduce((a, b) => a + b.pct, 0);
     switch (code) {
@@ -218,13 +226,18 @@ export async function buildReportPdfPlus(args: {
   doc.text(`Fecha: ${when}`, margin, y);
   y += 14;
 
-  // Mapa
+  // Map container — colocamos con mayor espaciado para evitar amontonamiento
   if (typeof opts?.lat === "number" && typeof opts?.lng === "number") {
-    const mapW = 220, mapH = 120, x = pageW - margin - mapW, topY = margin;
+    const mapW = 250, mapH = 140, x = pageW - margin - mapW, topY = margin;
     try {
       const durl = await fetchStaticMap(opts.lat, opts.lng, 900, 380);
       if (durl) {
-        doc.addImage(durl, "PNG", x, topY, mapW, mapH);
+        try {
+          doc.addImage(durl, "PNG", x, topY, mapW, mapH);
+        } catch {
+          doc.setDrawColor(180); doc.rect(x, topY, mapW, mapH);
+          doc.text("Mapa (no PNG) — ver ficha", x + 8, topY + 16);
+        }
       } else {
         doc.setDrawColor(180); doc.rect(x, topY, mapW, mapH);
         doc.text("Mapa no disponible", x + 8, topY + 16);
@@ -234,23 +247,30 @@ export async function buildReportPdfPlus(args: {
       doc.text("Error al cargar mapa", x + 8, topY + 16);
     }
     doc.setFontSize(9);
-    const coordY = margin + 140;
+    const coordY = topY + mapH + 8;
     doc.text(`Lat: ${opts.lat.toFixed(6)}  Lng: ${opts.lng.toFixed(6)}`, x, coordY);
+
+    // Aseguramos espacio vertical extra después de mapa para que no se amontone la siguiente sección
+    y = Math.max(y, topY + mapH + 28);
   }
 
-  // Nota
+  // Nota / intro (si existe)
   if (opts?.note) {
     doc.setFontSize(9);
-    const text = doc.splitTextToSize(sanitizeText(opts.note), pageW - margin * 2 - 240);
+    doc.setFont("helvetica", "normal");
+    const text = doc.splitTextToSize(sanitizeText(opts.note), pageW - margin * 2 - 260);
     doc.text(text, margin, y);
-    y += 14 * text.length + 6;
+    y += 14 * text.length + 8;
+  } else {
+    // ligero espacio antes de la mezcla global
+    y += 6;
   }
 
   // Mezcla Global
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
   doc.text("Mezcla Global (normalizada a 100 %)", margin, y);
-  y += 8;
+  y += 10;
   autoTable(doc, {
     startY: y + 6,
     head: [["Mineral", "%"]],
@@ -260,7 +280,7 @@ export async function buildReportPdfPlus(args: {
     margin: { left: margin, right: margin },
     theme: "grid",
   });
-  y = (doc as any).lastAutoTable.finalY + 12;
+  y = (doc as any).lastAutoTable.finalY + 14;
 
   // Interpretación (dinámica real)
   doc.setFont("helvetica", "bold");
@@ -269,15 +289,15 @@ export async function buildReportPdfPlus(args: {
   y += 10;
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
-  const interLines = doc.splitTextToSize(interpretMix(mixGlobal), pageW - margin * 2);
+  const interLines = doc.splitTextToSize(sanitizeText(interpretMix(mixGlobal)), pageW - margin * 2);
   doc.text(interLines, margin, y);
-  y += 14 * interLines.length + 8;
+  y += 14 * interLines.length + 12;
 
   // Resultados por imagen
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
   doc.text("Resultados por imagen", margin, y);
-  y += 8;
+  y += 10;
   autoTable(doc, {
     startY: y + 6,
     head: [["Imagen", "Top minerales (%)", "Exclusiones"]],
@@ -291,13 +311,13 @@ export async function buildReportPdfPlus(args: {
     margin: { left: margin, right: margin },
     theme: "grid",
   });
-  y = (doc as any).lastAutoTable.finalY + 12;
+  y = (doc as any).lastAutoTable.finalY + 14;
 
   // Tabla económica
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
   doc.text("Estimación económica (referencial)", margin, y);
-  y += 8;
+  y += 10;
   const econ = buildEconomics(mixGlobal, opts?.econ);
   autoTable(doc, {
     startY: y + 6,
@@ -317,6 +337,115 @@ export async function buildReportPdfPlus(args: {
     margin: { left: margin, right: margin },
     theme: "grid",
   });
+  y = (doc as any).lastAutoTable.finalY + 14;
+
+  // Recomendaciones (sección separada para que no se amontone)
+  try {
+    const recLines = [
+      "Recomendaciones:",
+      "- Si la estimación económica es Alta: avanzar a muestreo representativo, QA/QC y pruebas metalúrgicas.",
+      "- Si Media: continuar exploración dirigida y validar recuperación metalúrgica.",
+      "- Si Baja: priorizar prospección adicional y revisar costos.",
+      "Nota: Estas son recomendaciones preliminares basadas en observación; confirmar con ensayos de laboratorio."
+    ];
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("Conclusiones y recomendaciones", margin, y);
+    y += 12;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    const recText = doc.splitTextToSize(sanitizeText(recLines.join("\n")), pageW - margin * 2);
+    doc.text(recText, margin, y);
+    y += 14 * recText.length + 10;
+  } catch (e) {
+    // no bloquear si falla
+    y += 8;
+  }
+
+  // === NUEVA SECCIÓN: Tabla de yacimientos / canteras cercanas (si se proporcionaron) ===
+  if (Array.isArray(opts?.nearbySources)) {
+    try {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      doc.text("Yacimientos / Canteras cercanas (detectados)", margin, y);
+      y += 8;
+
+      const nearbyBody = (opts!.nearbySources || []).map((s: any) => {
+        const name = s.name || "Sin nombre";
+        const comm = Array.isArray(s.commodity) ? s.commodity.slice(0,3).join(", ") : (s.commodity || "");
+        const distKm = typeof s.distance_m === "number" ? (s.distance_m / 1000) : (s.distance_km ?? null);
+        const distStr = distKm == null ? "" : `${round2(distKm)} km`;
+        const lat = typeof s.latitude === "number" ? s.latitude.toFixed(6) : (s.lat ? Number(s.lat).toFixed(6) : "");
+        const lon = typeof s.longitude === "number" ? s.longitude.toFixed(6) : (s.lon ? Number(s.lon).toFixed(6) : "");
+        const source = s.source || (s.raw && s.raw.provider) || "";
+        const url = s.source_url || (s.raw && s.raw.url) || "";
+        const shortUrl = typeof url === "string" && url.length > 45 ? url.slice(0, 42) + "..." : url || "";
+
+        return [
+          sanitizeText(name),
+          sanitizeText(comm),
+          distStr,
+          lat,
+          lon,
+          source ? source : shortUrl
+        ];
+      });
+
+      // Si el array está vacío, mostramos una fila vacía para que la tabla siempre aparezca
+      const bodyToRender = nearbyBody.length > 0 ? nearbyBody : [["-", "-", "-", "-", "-", "-"]];
+
+      autoTable(doc, {
+        startY: y + 6,
+        head: [["Nombre", "Commodities", "Dist", "Lat", "Lon", "Fuente / URL"]],
+        body: bodyToRender,
+        styles: { fontSize: 8.5, cellPadding: 3, textColor: cellText },
+        headStyles: { fillColor: headFill, textColor: headText },
+        margin: { left: margin, right: margin },
+        theme: "grid",
+        columnStyles: {
+          0: { cellWidth: 120 }, // nombre
+          1: { cellWidth: 90 },  // commodities
+          2: { cellWidth: 48 },  // distancia
+          3: { cellWidth: 64 },  // lat
+          4: { cellWidth: 64 },  // lon
+          5: { cellWidth: 120 }, // fuente/url
+        },
+        styles: { overflow: "ellipsize" as any }
+      });
+
+      y = (doc as any).lastAutoTable.finalY + 12;
+    } catch (e) {
+      console.warn("Error generando tabla de yacimientos:", e);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.text("Nota: No fue posible generar la tabla de yacimientos.", margin, y);
+      y += 14;
+    }
+  } else {
+    // Si no viene nearbySources, mostramos la sección con fila vacía (para garantizar que exista en el PDF)
+    try {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      doc.text("Yacimientos / Canteras cercanas (detectados)", margin, y);
+      y += 8;
+      autoTable(doc, {
+        startY: y + 6,
+        head: [["Nombre", "Commodities", "Dist", "Lat", "Lon", "Fuente / URL"]],
+        body: [["-", "-", "-", "-", "-", "-"]],
+        styles: { fontSize: 8.5, cellPadding: 3, textColor: cellText },
+        headStyles: { fillColor: headFill, textColor: headText },
+        margin: { left: margin, right: margin },
+        theme: "grid",
+        columnStyles: {
+          0: { cellWidth: 120 }, 1: { cellWidth: 90 }, 2: { cellWidth: 48 }, 3: { cellWidth: 64 }, 4: { cellWidth: 64 }, 5: { cellWidth: 120 },
+        },
+        styles: { overflow: "ellipsize" as any }
+      });
+      y = (doc as any).lastAutoTable.finalY + 12;
+    } catch {
+      y += 8;
+    }
+  }
 
   // Pie
   doc.setFont("helvetica", "normal");

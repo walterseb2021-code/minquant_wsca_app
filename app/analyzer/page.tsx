@@ -4,8 +4,11 @@ import React from "react";
 import Link from "next/link";
 import CameraCapture, { type CapturedPhoto } from "../../components/CameraCapture";
 import GeoCapture, { type GeoResult } from "../../components/GeoCapture";
+import GeoSourcesPanel from "../../components/GeoSourcesPanel";
+import type { GeoSourceItem } from "../../lib/Geo/Types";
+// IMPORTS: ahora usamos buildReportPdfPlus (contiene la tabla nearby)
+import { buildReportPdfPlus } from "../../lib/pdf_plus";
 import {
-  buildReportPdf,
   buildMineralPdf,
   downloadPdf,
   type MineralResult,
@@ -24,7 +27,35 @@ async function fileToDataURL(file: File): Promise<string> {
   });
 }
 
-/** Promedia resultados por mineral a partir de perImage devuelto por /api/analyze */
+/** Normaliza nombre de minerales: quita acentos, unifica sinónimos */
+function normalizeMineralName(name: string): string {
+  if (!name) return "";
+  // Quitar acentos
+  const s = name.toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const low = s.trim().toLowerCase();
+
+  // Mapa de sinónimos / normalizaciones comunes (añade según tus datos)
+  const map: Record<string, string> = {
+    "azurite": "Azurita",
+    "azurita": "Azurita",
+    "malachite": "Malaquita",
+    "malaquita": "Malaquita",
+    "cuarzo": "Cuarzo",
+    "calcita": "Calcita",
+    "pirita": "Pirita",
+    "malachite oxide": "Malaquita",
+    // agrega más normalizaciones que necesites
+  };
+
+  if (map[low]) return map[low];
+
+  // Capitaliza la primera letra por defecto
+  return low.replace(/^\w/, (c) => c.toUpperCase());
+}
+
+/** Promedia resultados por mineral a partir de perImage devuelto por /api/analyze
+ *  Versión mejorada: normaliza nombres para evitar duplicados por idioma/acentos
+ */
 function computeGlobalAverage(
   perImage: { fileName: string; results: MineralResult[] }[]
 ): MineralResult[] {
@@ -33,18 +64,20 @@ function computeGlobalAverage(
 
   for (const img of perImage) {
     for (const r of img.results) {
-      const k = r.name.toLowerCase();
-      acc.set(k, (acc.get(k) || 0) + (r.pct || 0));
-      count.set(k, (count.get(k) || 0) + 1);
+      const normName = normalizeMineralName(r.name || "");
+      acc.set(normName, (acc.get(normName) || 0) + (r.pct || 0));
+      count.set(normName, (count.get(normName) || 0) + 1);
     }
   }
+
   // promedio simple (promedia % sobre # de imágenes donde aparece)
   const out: MineralResult[] = [];
-  for (const [k, sum] of acc.entries()) {
-    const n = count.get(k) || 1;
+  for (const [name, sum] of acc.entries()) {
+    const n = count.get(name) || 1;
     const avg = sum / n;
-    out.push({ name: k.replace(/^./, (c) => c.toUpperCase()), pct: avg });
+    out.push({ name, pct: avg });
   }
+
   // normaliza a 100 con 1 decimal; ordena desc
   const total = out.reduce((s, x) => s + x.pct, 0) || 1;
   const scaled = out.map((r) => ({ ...r, pct: Math.round((r.pct / total) * 1000) / 10 })); // 1 decimal
@@ -52,8 +85,7 @@ function computeGlobalAverage(
   return scaled;
 }
 
-/* === Base de datos mínima para ficha técnica (tipo v-4) ===
-   Si más adelante mueves a /lib/catalog.ts, lo conectamos. */
+/* === Base de datos mínima para ficha técnica (tipo v-4) === */
 type MineralDetails = {
   formula?: string;
   commodity?: string;
@@ -133,7 +165,6 @@ const MINERAL_DB: Record<string, MineralDetails> = {
     associates: "Cuarzo; Micas",
     notes: "Importante en cerámica y vidrio",
   },
-  // Agrega más minerales si lo necesitas…
 };
 
 /* Precios demo (puedes sustituir por tu tabla de Supabase) */
@@ -168,6 +199,12 @@ export default function AnalyzerPage() {
   const [busyAnalyze, setBusyAnalyze] = React.useState(false);
   const [busyGeneralPdf, setBusyGeneralPdf] = React.useState(false);
   const [busyMineralPdf, setBusyMineralPdf] = React.useState(false);
+
+  // Nearby (yacimiento) states
+  const [nearbyItems, setNearbyItems] = React.useState<GeoSourceItem[]>([]);
+  const [nearbySelected, setNearbySelected] = React.useState<GeoSourceItem[]>([]);
+  const [loadingNearby, setLoadingNearby] = React.useState(false);
+  const [errorNearby, setErrorNearby] = React.useState<string | null>(null);
 
   // Modal ficha
   const [modalOpen, setModalOpen] = React.useState(false);
@@ -229,7 +266,7 @@ export default function AnalyzerPage() {
     }
   }
 
-  // PDF general (con mapa estático si hay geo)
+  // PDF general (con mapa estático si hay geo) -> usa buildReportPdfPlus
   async function handleExportGeneralPdf() {
     if (!globalResults.length || !perImage.length) {
       alert("Primero realiza el análisis.");
@@ -237,25 +274,35 @@ export default function AnalyzerPage() {
     }
     setBusyGeneralPdf(true);
     try {
-      const doc = await buildReportPdf({
-        appName: "MinQuant_WSCA",
-        sampleCode,
-        results: globalResults,
-        perImage,
-        imageDataUrls: imagesDataURL,
-        generatedAt: new Date().toISOString(),
-        location: geo?.point
-          ? {
-              lat: geo.point.lat,
-              lng: geo.point.lng,
-              accuracy: geo.point.accuracy,
-              address: geo.address?.formatted,
-            }
-          : undefined,
-        embedStaticMap: true, // <<--- clave para que salga el mapa en portada
-      });
+      // Construimos byImage en la forma esperada por buildReportPdfPlus
+      const byImage = perImage.map((p) => ({
+        filename: p.fileName,
+        minerals: p.results,
+        excluded: null,
+      }));
+
+      const opts = {
+        title: `Reporte ${sampleCode}`,
+        note: undefined,
+        lat: geo?.point?.lat,
+        lng: geo?.point?.lng,
+        dateISO: new Date().toISOString(),
+        econ: undefined,
+        // IMPORTANT: aquí pasamos los seleccionados (nearbySelected)
+        nearbySources: nearbySelected || [],
+      };
+
+      const doc = await buildReportPdfPlus({
+        mixGlobal: globalResults,
+        byImage,
+        opts,
+      } as any);
+
       const buffer = doc.output("arraybuffer");
       downloadPdf(new Uint8Array(buffer), `Reporte_${sampleCode}.pdf`);
+    } catch (e: any) {
+      console.error("Error generando PDF general:", e?.message || e);
+      alert(`No fue posible generar el PDF: ${e?.message || e}`);
     } finally {
       setBusyGeneralPdf(false);
     }
@@ -300,6 +347,38 @@ export default function AnalyzerPage() {
     if (!price) return null;
     const v = price * (pct / 100);
     return new Intl.NumberFormat("es-PE", { style: "currency", currency }).format(v);
+  }
+
+  /* ==================== Nearby (fetch) ==================== */
+
+  async function fetchNearby(lat: number, lon: number) {
+    try {
+      setLoadingNearby(true);
+      setErrorNearby(null);
+      setNearbyItems([]);
+      const res = await fetch(`/api/geosources?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`);
+      const j = await res.json();
+      if (!res.ok) {
+        setErrorNearby(j?.error || "Error al obtener yacimientos");
+        setNearbyItems([]);
+      } else {
+        setNearbyItems(Array.isArray(j.items) ? j.items : []);
+      }
+    } catch (err: any) {
+      setErrorNearby(err?.message || "Error de red");
+      setNearbyItems([]);
+    } finally {
+      setLoadingNearby(false);
+    }
+  }
+
+  // Toggle selección de yacimiento (añadir/quitar)
+  function toggleNearbySelect(item: GeoSourceItem) {
+    setNearbySelected((prev) => {
+      const exists = prev.find((p) => p.id === item.id);
+      if (exists) return prev.filter((p) => p.id !== item.id);
+      return [...prev, item];
+    });
   }
 
   /* ==================== UI ==================== */
@@ -382,8 +461,56 @@ export default function AnalyzerPage() {
           )}
 
           {/* Ubicación */}
-          <div className="mb-6">
+          <div className="mb-4">
             <GeoCapture onChange={setGeo} />
+          </div>
+
+          {/* Botón buscar yacimientos (usa geo) */}
+          <div className="mb-4">
+            <button
+              disabled={!geo?.point || loadingNearby}
+              onClick={() => {
+                if (geo?.point) fetchNearby(geo.point.lat, geo.point.lng);
+                else alert("Primero obtén la ubicación (activar GPS / seleccionar punto).");
+              }}
+              className="px-3 py-2 rounded bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-50"
+            >
+              {loadingNearby ? "Buscando yacimientos…" : "Buscar yacimientos cercanos"}
+            </button>
+            {errorNearby && <div className="text-red-600 text-sm mt-2">{errorNearby}</div>}
+          </div>
+
+          {/* Vista rápida de yacimientos bajo la captura */}
+          <div className="mb-6">
+            <GeoSourcesPanel
+              items={nearbyItems}
+              onInclude={(it) => {
+                toggleNearbySelect(it);
+                // Retroalimentación
+                const exists = nearbySelected.find((s) => s.id === it.id);
+                alert(exists ? `Removido de selección: ${it.name}` : `Seleccionado: ${it.name}`);
+              }}
+            />
+
+            {/* Lista simple de seleccionados (pequeña vista) */}
+            {nearbySelected.length > 0 && (
+              <div className="mt-3 p-2 border rounded bg-white">
+                <div className="text-sm font-medium mb-1">Seleccionados ({nearbySelected.length})</div>
+                <ul className="text-sm space-y-1">
+                  {nearbySelected.map((s) => (
+                    <li key={s.id} className="flex items-center justify-between">
+                      <span>{s.name || "Sin nombre"}</span>
+                      <button
+                        onClick={() => toggleNearbySelect(s)}
+                        className="text-xs px-2 py-1 rounded bg-gray-200 hover:bg-gray-300"
+                      >
+                        Quitar
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
 
           {/* Acciones */}
@@ -483,6 +610,42 @@ export default function AnalyzerPage() {
                     </table>
                   </div>
                 ))}
+              </div>
+
+              {/* Panel extendido de yacimientos */}
+              <div className="border rounded-xl p-3">
+                <h4 className="font-semibold mb-2">Yacimientos / Canteras cercanas</h4>
+                <p className="text-sm text-gray-600 mb-3">Resultados obtenidos desde OpenStreetMap (Overpass) y Geoapify.</p>
+
+                <GeoSourcesPanel
+                  items={nearbyItems}
+                  onInclude={(it) => {
+                    toggleNearbySelect(it);
+                    const exists = nearbySelected.find((s) => s.id === it.id);
+                    alert(exists ? `Removido de selección: ${it.name}` : `Seleccionado: ${it.name}`);
+                  }}
+                />
+
+                {/* Lista de seleccionados (mayor espacio en el panel) */}
+                {nearbySelected.length > 0 && (
+                  <div className="mt-4 p-3 bg-white border rounded">
+                    <div className="font-medium mb-2">Yacimientos seleccionados ({nearbySelected.length})</div>
+                    <ul className="text-sm space-y-2">
+                      {nearbySelected.map((s) => (
+                        <li key={s.id} className="flex items-center justify-between">
+                          <div>
+                            <div className="font-medium">{s.name || "Sin nombre"}</div>
+                            <div className="text-xs text-gray-500">{s.latitude.toFixed(5)}, {s.longitude.toFixed(5)}</div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <a href={s.source_url} target="_blank" rel="noreferrer" className="text-xs underline text-blue-600">Fuente</a>
+                            <button onClick={() => toggleNearbySelect(s)} className="text-xs px-2 py-1 rounded bg-gray-200 hover:bg-gray-300">Quitar</button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             </div>
           )}
