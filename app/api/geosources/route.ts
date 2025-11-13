@@ -1,6 +1,6 @@
 // app/api/geosources/route.ts
 import { NextResponse } from "next/server";
-import { findNearby } from "../../../lib/Geo/Nearby";
+import { findNearby } from "../../../lib/geo/Nearby";
 
 export async function GET(req: Request) {
   try {
