@@ -443,7 +443,8 @@ export default function AnalyzerPage() {
 
           {/* Cámara */}
           <div className="mb-3">
-            <CameraCapture onPhotos={handlePhotos} />
+            <CameraCapture onPhotos={handlePhotos} resetSignal={sessionCounter} />
+
           </div>
 
           {/* Miniaturas de las fotos tomadas/subidas */}

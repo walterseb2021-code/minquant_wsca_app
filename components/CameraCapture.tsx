@@ -9,11 +9,13 @@ type Props = {
   onPhotos: (photos: CapturedPhoto[]) => void;
   /** Máximo de fotos permitidas */
   max?: number;
+  /** Señal externa para limpiar fotos */
+  resetSignal?: number;
 };
 
 const DEFAULT_MAX = 6;
 
-export default function CameraCapture({ onPhotos, max = DEFAULT_MAX }: Props) {
+export default function CameraCapture({ onPhotos, max = DEFAULT_MAX, resetSignal }: Props) {
   const [photos, setPhotos] = React.useState<CapturedPhoto[]>([]);
   const camRef = React.useRef<HTMLInputElement | null>(null);
   const galRef = React.useRef<HTMLInputElement | null>(null);
@@ -22,6 +24,13 @@ export default function CameraCapture({ onPhotos, max = DEFAULT_MAX }: Props) {
   React.useEffect(() => {
     onPhotos(photos);
   }, [photos, onPhotos]);
+
+  // 💥 NUEVO: limpiar al recibir una señal externa
+  React.useEffect(() => {
+    setPhotos([]);
+    if (camRef.current) camRef.current.value = "";
+    if (galRef.current) galRef.current.value = "";
+  }, [resetSignal]);
 
   const makePhoto = (file: File): CapturedPhoto => ({
     file,
@@ -75,7 +84,6 @@ export default function CameraCapture({ onPhotos, max = DEFAULT_MAX }: Props) {
     resetValue(galRef.current);
   };
 
-  // No renderizamos miniaturas aquí (para evitar duplicado con page.tsx)
   return (
     <div className="flex items-center gap-2">
       <button
@@ -105,6 +113,7 @@ export default function CameraCapture({ onPhotos, max = DEFAULT_MAX }: Props) {
         onChange={onCamChange}
         className="hidden"
       />
+
       <input
         ref={galRef}
         type="file"

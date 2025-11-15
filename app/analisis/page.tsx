@@ -5,6 +5,7 @@ import Link from "next/link";
 import CameraCapture, { type CapturedPhoto } from "../../components/CameraCapture";
 import GeoCapture, { type GeoResult } from "../../components/GeoCapture";
 import GeoSourcesPanel from "../../components/GeoSourcesPanel"; // Panel de fuentes geoespaciales
+import type { GeoSourceItem } from "../../lib/Geo/Types";
 
 import {
   buildMineralPdf,
@@ -131,8 +132,12 @@ export default function AnalisisPage() {
   const [imagesDataURL, setImagesDataURL] = React.useState<string[]>([]);
   const [geo, setGeo] = React.useState<GeoResult | null>(null);
 
+  // Contador de sesión para códigos: aumenta cada "Nuevo análisis"
+  const [sessionCounter, setSessionCounter] = React.useState<number>(1);
+  const fmtCode = (n: number) => `MQ-${String(n).padStart(4, "0")}`;
+
   // Parámetros
-  const [sampleCode, setSampleCode] = React.useState("MQ-0001");
+  const [sampleCode, setSampleCode] = React.useState<string>(fmtCode(1));
   const [currency, setCurrency] = React.useState<CurrencyCode>("USD");
 
   // Ajustes de recuperaciones/payables (por proceso)
@@ -158,7 +163,7 @@ export default function AnalisisPage() {
     Ag: 0.90,
   });
 
-  // ======= PERSISTENCIA EN LOCALSTORAGE =======
+  // ======= PERSISTENCIA EN LOCALSTORAGE (solo preferencias) =======
   React.useEffect(() => {
     try {
       const c = localStorage.getItem("mq_currency");
@@ -196,6 +201,20 @@ export default function AnalisisPage() {
   const [modalInfo, setModalInfo] = React.useState<MineralInfoWeb | null>(null);
   const [loadingInfo, setLoadingInfo] = React.useState(false);
 
+  // Nearby (yacimientos)
+  const [nearbyItems, setNearbyItems] = React.useState<GeoSourceItem[]>([]);
+  const [nearbySelected, setNearbySelected] = React.useState<GeoSourceItem[]>([]);
+  const [loadingNearby, setLoadingNearby] = React.useState(false);
+  const [errorNearby, setErrorNearby] = React.useState<string | null>(null);
+
+  // Toast simple
+  const [toast, setToast] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3800);
+    return () => clearTimeout(t);
+  }, [toast]);
+
   // Handlers de UI
   const setNum = (metal: "Cobre" | "Zinc" | "Plomo", field: "recovery" | "payable", val: string) => {
     const pct = Math.max(0, Math.min(100, Number(val)));
@@ -216,7 +235,7 @@ export default function AnalisisPage() {
   /* ===================== Analizar (llama /api/analyze) ===================== */
   async function handleAnalyze() {
     if (!photos.length) {
-      alert("Primero toma o sube al menos una foto.");
+      setToast("Primero toma o sube al menos una foto.");
       return;
     }
     setBusyAnalyze(true);
@@ -247,16 +266,50 @@ export default function AnalisisPage() {
       setInterpretation(inter);
     } catch (e: any) {
       console.error("[Analyze] Error:", e);
-      alert(e?.message || "Error analizando");
+      setToast(e?.message || "Error analizando");
     } finally {
       setBusyAnalyze(false);
     }
   }
 
+  /* ===================== Buscar yacimientos cercanos ===================== */
+  async function fetchNearby(lat: number, lon: number) {
+    try {
+      setLoadingNearby(true);
+      setErrorNearby(null);
+      setNearbyItems([]);
+      const res = await fetch(`/api/geosources?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`);
+      const j = await res.json();
+      if (!res.ok) {
+        setErrorNearby(j?.error || "Error al obtener yacimientos");
+        setNearbyItems([]);
+        setToast("Error al buscar yacimientos.");
+      } else {
+        const items = Array.isArray(j.items) ? j.items : [];
+        setNearbyItems(items);
+        if (!items.length) setToast("No se encontraron yacimientos cercanos.");
+      }
+    } catch (err: any) {
+      setErrorNearby(err?.message || "Error de red");
+      setNearbyItems([]);
+      setToast("Error de red buscando yacimientos.");
+    } finally {
+      setLoadingNearby(false);
+    }
+  }
+
+  function toggleNearbySelect(item: GeoSourceItem) {
+    setNearbySelected((prev) => {
+      const exists = prev.find((p) => p.id === item.id);
+      if (exists) return prev.filter((p) => p.id !== item.id);
+      return [...prev, item];
+    });
+  }
+
   /* ===================== PDF general ===================== */
   async function handleExportGeneralPdf() {
     if (!globalResults.length) {
-      alert("Primero realiza el análisis.");
+      setToast("Primero realiza el análisis.");
       return;
     }
     setBusyGeneralPdf(true);
@@ -275,48 +328,24 @@ export default function AnalisisPage() {
         payables: { ...payables },
       };
 
-      const doc = await (buildReportPdfPlus as any)({
-        // ---- Firma “vieja” compatible ----
-        appName: "MinQuant_WSCA",
-        sampleCode,
-        results: globalResults,
-        perImage,
-        imageDataUrls: imagesDataURL,
-        generatedAt: new Date().toISOString(),
-        location: geo?.point
-          ? { lat: geo.point.lat, lng: geo.point.lng, accuracy: geo.point.accuracy, address: geo.address?.formatted }
-          : undefined,
-        embedStaticMap: true,
-        recoveryPayables: safeAdj,
-        interpretation: interpretation || undefined,
-        excluded,
-
-        // ---- Firma “nueva” propuesta ----
-        mixGlobal: globalResults?.map(r => ({ name: r.name, pct: r.pct })) ?? [],
-        byImage: perImage?.map(p => ({
-          filename: p.fileName,
-          minerals: p.results.map(rr => ({ name: rr.name, pct: rr.pct })),
-        })) ?? [],
-        opts: {
-          title: "Reporte de Análisis Mineral – MinQuant_WSCA",
-          lat: geo?.point?.lat,
-          lng: geo?.point?.lng,
-          dateISO: new Date().toISOString(),
-          econ: econOverrides,
-          note: "Advertencia: Informe preliminar, referencial; requiere validación con ensayo químico.",
-        },
-
-        // ---- Overrides explícitos ----
-        priceOverrides:   prices,
-        payableOverrides: payables,
+      // Construyo opts con nearbySelected
+      const byImage = perImage.map((p) => ({ filename: p.fileName, minerals: p.results, excluded: null }));
+      const opts = {
+        title: `Reporte ${sampleCode}`,
+        note: "Advertencia: Informe preliminar, referencial; requiere validación con ensayo químico.",
+        lat: geo?.point?.lat,
+        lng: geo?.point?.lng,
+        dateISO: new Date().toISOString(),
         econ: econOverrides,
-      });
+        nearbySources: nearbySelected || [],
+      };
 
+      const doc = await (buildReportPdfPlus as any)({ mixGlobal: globalResults, byImage, opts } as any);
       const buffer = doc.output("arraybuffer");
       downloadPdf(new Uint8Array(buffer), `Reporte_${sampleCode}.pdf`);
     } catch (e: any) {
       console.error("[PDF] Error:", e);
-      alert("Error al generar el PDF.");
+      setToast("Error al generar el PDF.");
     } finally {
       setBusyGeneralPdf(false);
     }
@@ -357,10 +386,36 @@ export default function AnalisisPage() {
       });
       downloadPdf(bytes, `Ficha_${name}.pdf`);
     } catch {
-      alert("Error al generar el PDF del mineral.");
+      setToast("Error al generar el PDF del mineral.");
     } finally {
       setBusyMineralPdf(false);
     }
+  }
+
+  /* ===================== NUEVO: limpiar y preparar nuevo análisis ===================== */
+  function handleNewAnalysis() {
+    // incrementa el contador de sesión y genera nuevo código
+    const next = sessionCounter + 1;
+    setSessionCounter(next);
+    const newCode = fmtCode(next);
+    setSampleCode(newCode);
+
+    // limpiar estados principales para iniciar nuevo análisis
+    setPhotos([]);
+    setImagesDataURL([]);
+    setGeo(null);
+    setGlobalResults([]);
+    setPerImage([]);
+    setExcluded([]);
+    setInterpretation(null);
+    setModalOpen(false);
+    setModalMineral(null);
+    setModalInfo(null);
+    setNearbyItems([]);
+    setNearbySelected([]);
+    setErrorNearby(null);
+
+    setToast("Listo: preparado para nuevo análisis.");
   }
 
   /* ===================== Render ===================== */
@@ -373,7 +428,12 @@ export default function AnalisisPage() {
       <header className="w-full py-3 px-5 bg-gradient-to-r from-cyan-600 to-emerald-600 text-white">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <h1 className="text-lg font-semibold">Cámara • Ubicación • Análisis</h1>
-          <Link href="/" className="px-3 py-1 rounded bg-white/20 hover:bg-white/30">Inicio</Link>
+          <div className="flex items-center gap-2">
+            <button onClick={handleNewAnalysis} className="px-3 py-1 rounded bg-white/20 hover:bg-white/30">
+              Nuevo Análisis
+            </button>
+            <Link href="/" className="px-3 py-1 rounded bg-white/20 hover:bg-white/30">Inicio</Link>
+          </div>
         </div>
       </header>
 
@@ -469,7 +529,8 @@ export default function AnalisisPage() {
             </p>
           </div>
 
-          <CameraCapture onPhotos={handlePhotos} />
+          <CameraCapture onPhotos={handlePhotos} resetSignal={sessionCounter} />
+
 
           {extra > 0 && (
             <div className="mt-3 rounded bg-yellow-50 border border-yellow-300 px-3 py-2 text-sm text-yellow-800">
@@ -490,22 +551,47 @@ export default function AnalisisPage() {
 
           <GeoCapture onChange={setGeo} />
 
-          {/* Panel de fuentes geoespaciales */}
-          <GeoSourcesPanel />
+          {/* Panel de fuentes geoespaciales + botón para buscar nearby */}
+          <div className="mt-3 mb-3">
+            <div className="flex items-center gap-2 mb-2">
+              <button
+                disabled={!geo?.point || loadingNearby}
+                onClick={() => {
+                  if (geo?.point) fetchNearby(geo.point.lat, geo.point.lng);
+                  else setToast("Primero obtén la ubicación (activar GPS / seleccionar punto).");
+                }}
+                className="px-3 py-2 rounded bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-50"
+              >
+                {loadingNearby ? "Buscando yacimientos…" : "Buscar yacimientos cercanos"}
+              </button>
+              {errorNearby && <div className="text-red-600 text-sm">{errorNearby}</div>}
+            </div>
 
-          <button
-            onClick={handleAnalyze}
-            disabled={!canAnalyze || busyAnalyze}
-            className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded disabled:opacity-50">
-            {busyAnalyze ? "Analizando..." : "Analizar"}
-          </button>
+            <GeoSourcesPanel
+              items={nearbyItems}
+              onInclude={(it: GeoSourceItem) => {
+                toggleNearbySelect(it);
+                const exists = nearbySelected.find(s => s.id === it.id);
+                setToast(exists ? `Removido: ${it.name}` : `Seleccionado: ${it.name}`);
+              }}
+            />
+          </div>
 
-          <button
-            onClick={handleExportGeneralPdf}
-            disabled={!globalResults.length}
-            className="mt-4 ml-3 px-4 py-2 bg-emerald-600 text-white rounded disabled:opacity-50">
-            PDF general
-          </button>
+          <div className="flex gap-3 mt-3">
+            <button
+              onClick={handleAnalyze}
+              disabled={!canAnalyze || busyAnalyze}
+              className="px-4 py-2 bg-indigo-600 text-white rounded disabled:opacity-50">
+              {busyAnalyze ? "Analizando..." : "Analizar"}
+            </button>
+
+            <button
+              onClick={handleExportGeneralPdf}
+              disabled={!globalResults.length || busyGeneralPdf}
+              className="px-4 py-2 bg-emerald-600 text-white rounded disabled:opacity-50">
+              {busyGeneralPdf ? "Generando PDF…" : "PDF general"}
+            </button>
+          </div>
         </div>
 
         {/* DERECHA */}
@@ -577,6 +663,27 @@ export default function AnalisisPage() {
                   </ul>
                 </div>
               )}
+
+              {/* Seleccionados (yacimientos incluidos) */}
+              {nearbySelected.length > 0 && (
+                <div className="border rounded-xl p-3 bg-white mt-4">
+                  <div className="font-semibold mb-2">Yacimientos incluidos ({nearbySelected.length})</div>
+                  <ul className="text-sm space-y-2">
+                    {nearbySelected.map((s) => (
+                      <li key={s.id} className="flex items-center justify-between">
+                        <div>
+                          <div className="font-medium">{s.name || "Sin nombre"}</div>
+                          <div className="text-xs text-gray-500">{s.latitude?.toFixed(5)}, {s.longitude?.toFixed(5)}</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <a href={s.source_url} target="_blank" rel="noreferrer" className="text-xs underline text-blue-600">Fuente</a>
+                          <button onClick={() => toggleNearbySelect(s)} className="text-xs px-2 py-1 rounded bg-gray-200 hover:bg-gray-300">Quitar</button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -605,6 +712,13 @@ export default function AnalisisPage() {
                 )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Toast simple */}
+      {toast && (
+        <div className="fixed right-4 bottom-6 z-50 bg-black/85 text-white px-4 py-2 rounded shadow">
+          {toast}
         </div>
       )}
     </main>
