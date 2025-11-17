@@ -186,6 +186,8 @@ export default function AnalyzerPage() {
   const [photos, setPhotos] = React.useState<CapturedPhoto[]>([]);
   const [imagesDataURL, setImagesDataURL] = React.useState<string[]>([]);
   const [geo, setGeo] = React.useState<GeoResult | null>(null);
+    const [sessionCounter, setSessionCounter] = React.useState<number>(1);
+  const fmtCode = (n: number) => `MQ-${String(n).padStart(4, "0")}`;
 
   // Parámetros
   const [sampleCode, setSampleCode] = React.useState("MQ-0001");
