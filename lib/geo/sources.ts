@@ -13,7 +13,9 @@ export type GeoSource = {
  * Estos endpoints pueden consultarse mediante GetCapabilities o integrarse en mapas base.
  */
 export const SOURCES: GeoSource[] = [
+  // ---------------------------------------------------------
   // 🇵🇪 PERÚ – INGEMMET (GEOCATMIN)
+  // ---------------------------------------------------------
   {
     country: "Perú",
     name: "Geología nacional 1:1M – INGEMMET",
@@ -34,12 +36,14 @@ export const SOURCES: GeoSource[] = [
   },
   {
     country: "Perú",
-    name: "Portal GEOCATMIN",
+    name: "Portal GEOCATMIN – INGEMMET",
     type: "Portal",
-    url: "https://www.ingemmet.gob.pe/web/guest/geocatmin",
+    url: "https://geocatmin.ingemmet.gob.pe/geocatmin/main",
   },
 
+  // ---------------------------------------------------------
   // 🇨🇱 CHILE – SERNAGEOMIN
+  // ---------------------------------------------------------
   {
     country: "Chile",
     name: "Geología base 1:1M – SERNAGEOMIN",
@@ -53,7 +57,9 @@ export const SOURCES: GeoSource[] = [
     url: "https://portalgeomin.sernageomin.cl/",
   },
 
+  // ---------------------------------------------------------
   // 🇦🇷 ARGENTINA – SEGEMAR
+  // ---------------------------------------------------------
   {
     country: "Argentina",
     name: "SIGAM WMS – SEGEMAR",
@@ -73,7 +79,9 @@ export const SOURCES: GeoSource[] = [
     url: "https://sigam.segemar.gov.ar/wordpress/geoservicios/",
   },
 
+  // ---------------------------------------------------------
   // 🇨🇴 COLOMBIA – SERVICIO GEOLÓGICO COLOMBIANO
+  // ---------------------------------------------------------
   {
     country: "Colombia",
     name: "Atlas Geológico Nacional – SGC",
@@ -93,7 +101,9 @@ export const SOURCES: GeoSource[] = [
     url: "https://www2.sgc.gov.co/sgc/mapas/Geoservicio/Paginas/geoservicios.aspx",
   },
 
+  // ---------------------------------------------------------
   // 🇧🇷 BRASIL – CPRM / SGB
+  // ---------------------------------------------------------
   {
     country: "Brasil",
     name: "GeoSGB WMS – CPRM/SGB",
@@ -113,7 +123,9 @@ export const SOURCES: GeoSource[] = [
     url: "https://geosgb.sgb.gov.br/",
   },
 
+  // ---------------------------------------------------------
   // 🇺🇸 ESTADOS UNIDOS – USGS
+  // ---------------------------------------------------------
   {
     country: "EE.UU.",
     name: "USGS National Map Services",
@@ -121,7 +133,9 @@ export const SOURCES: GeoSource[] = [
     url: "https://apps.nationalmap.gov/services/",
   },
 
+  // ---------------------------------------------------------
   // 🇨🇦 CANADÁ – GSC
+  // ---------------------------------------------------------
   {
     country: "Canadá",
     name: "GeoScience Map WMS – GSC",
@@ -135,7 +149,9 @@ export const SOURCES: GeoSource[] = [
     url: "https://geoscan.nrcan.gc.ca/",
   },
 
+  // ---------------------------------------------------------
   // 🇫🇷 FRANCIA – BRGM
+  // ---------------------------------------------------------
   {
     country: "Francia",
     name: "CGMW / BRGM WMS – Geología estructural",
@@ -149,7 +165,9 @@ export const SOURCES: GeoSource[] = [
     url: "https://infoterre.brgm.fr/",
   },
 
+  // ---------------------------------------------------------
   // 🇩🇪 ALEMANIA – BGR
+  // ---------------------------------------------------------
   {
     country: "Alemania",
     name: "Geologische Karte Deutschland 1:1M – BGR",
@@ -163,7 +181,9 @@ export const SOURCES: GeoSource[] = [
     url: "https://www.bgr.bund.de/DE/Home/homepage_node.html",
   },
 
+  // ---------------------------------------------------------
   // 🇸🇪 SUECIA – SGU
+  // ---------------------------------------------------------
   {
     country: "Suecia",
     name: "SGU Surface Geology WMS",
@@ -177,7 +197,9 @@ export const SOURCES: GeoSource[] = [
     url: "https://www.sgu.se/en/",
   },
 
+  // ---------------------------------------------------------
   // 🇿🇦 SUDÁFRICA – COUNCIL FOR GEOSCIENCE
+  // ---------------------------------------------------------
   {
     country: "Sudáfrica",
     name: "CGS National Geology WMS",
@@ -191,7 +213,9 @@ export const SOURCES: GeoSource[] = [
     url: "https://portal.geoscience.org.za/",
   },
 
+  // ---------------------------------------------------------
   // 🇨🇳 CHINA – CGS
+  // ---------------------------------------------------------
   {
     country: "China",
     name: "CGS Geología Nacional WMS",
@@ -205,7 +229,9 @@ export const SOURCES: GeoSource[] = [
     url: "http://www.cgs.gov.cn/",
   },
 
+  // ---------------------------------------------------------
   // 🇦🇺 AUSTRALIA – GEOSCIENCE AUSTRALIA
+  // ---------------------------------------------------------
   {
     country: "Australia",
     name: "Superficial Geology WMS – Geoscience Australia",
@@ -225,7 +251,21 @@ export const SOURCES: GeoSource[] = [
     url: "https://www.ga.gov.au/",
   },
 
-  // 🌐 PORTALES GLOBALES
+  // ---------------------------------------------------------
+  // 🌐 PORTALES GLOBALES – (AÑADIDOS NUEVOS)
+  // ---------------------------------------------------------
+  {
+    country: "Global",
+    name: "ArcGIS – Global Mines and Minerals (Esri)",
+    type: "Portal",
+    url: "https://www.arcgis.com/apps/mapviewer/index.html?webmap=83ba2b12bc944167a40289cbdb931f39",
+  },
+  {
+    country: "Global",
+    name: "IGF – Mapa de Minerales Críticos",
+    type: "Portal",
+    url: "https://www.igfmining.org/es/resource/igf-critical-minerals-map/",
+  },
   {
     country: "Global",
     name: "OneGeology Global Portal",
@@ -234,7 +274,7 @@ export const SOURCES: GeoSource[] = [
   },
   {
     country: "Global",
-    name: "MDNP – Mineral Development Network Platform (UE/ALC)",
+    name: "MDNP – Mineral Development Network Platform",
     type: "Portal",
     url: "https://mineraldevelopmentnetworkplatform.org/",
   },
