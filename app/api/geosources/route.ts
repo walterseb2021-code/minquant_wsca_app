@@ -1,41 +1,33 @@
 // app/api/geosources/route.ts
 import { NextResponse } from "next/server";
-// IMPORT CORREGIDO: path sensible a mayúsculas — debe coincidir exactamente con el nombre del fichero en lib/geo
-import { findNearby } from "../../../lib/geo/nearby";
-
-export const runtime = "nodejs";
-
-function toNum(v: string | null) {
-  if (!v) return NaN;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : NaN;
-}
+import { SOURCES } from "@/lib/geo/sources";
 
 export async function GET(req: Request) {
   try {
-    const url = new URL(req.url);
-    // Aceptamos lat/lon con varias keys posibles (lat/lon, latitude/longitude, lng)
-    const latParam = url.searchParams.get("lat") ?? url.searchParams.get("latitude");
-    const lonParam =
-      url.searchParams.get("lon") ?? url.searchParams.get("lng") ?? url.searchParams.get("longitude");
+    const { searchParams } = new URL(req.url);
+    const country = searchParams.get("country") || "";
 
-    if (!latParam || !lonParam) {
-      return NextResponse.json({ error: "Se requieren los parámetros lat y lon en la query." }, { status: 400 });
+    // --- NUEVA LÓGICA ---
+    // 1) SI ES PERÚ → SOLO INGEMMET
+    if (country === "Perú") {
+      const peru = SOURCES.filter((s) => s.country === "Perú");
+      return NextResponse.json({ sources: peru });
     }
 
-    const lat = toNum(latParam);
-    const lon = toNum(lonParam);
-
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-      return NextResponse.json({ error: "lat y lon deben ser números válidos." }, { status: 400 });
+    // 2) SI ES GLOBAL → SOLO FUENTES GLOBALES
+    if (country === "Global") {
+      const globalSources = SOURCES.filter((s) => s.country === "Global");
+      return NextResponse.json({ sources: globalSources });
     }
 
-    // Llamada a la función que busca y devuelve items (asegúrate que lib/geo/nearby.ts exporta findNearby)
-    const items = await findNearby(lat, lon, { maxResults: 20, timeoutMs: 6000 });
+    // 3) SI ES OTRO PAÍS → usar SOLO fuentes globales
+    const fallbackGlobal = SOURCES.filter((s) => s.country === "Global");
+    return NextResponse.json({ sources: fallbackGlobal });
 
-    return NextResponse.json({ items });
   } catch (err: any) {
-    console.error("Error en /api/geosources:", err);
-    return NextResponse.json({ error: "Error interno del servidor." }, { status: 500 });
+    return NextResponse.json(
+      { error: err.message || "Unknown error" },
+      { status: 500 }
+    );
   }
 }
