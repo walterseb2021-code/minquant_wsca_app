@@ -4,8 +4,8 @@ import React from "react";
 import Link from "next/link";
 import CameraCapture, { type CapturedPhoto } from "../../components/CameraCapture";
 import GeoCapture, { type GeoResult } from "../../components/GeoCapture";
-import GeoSourcesPanel from "../../components/GeoSourcesPanel"; // Panel de fuentes geoespaciales
-import type { GeoSourceItem } from "../../lib/Geo/Types";
+import GeoSourcesPanel from "@/components/GeoSourcesPanel"; // Panel de fuentes geoespaciales (ruta absoluta)
+import type { GeoSourceItem } from "../../lib/geo/types";
 
 import {
   buildMineralPdf,
@@ -87,8 +87,8 @@ function buildInterpretationClient(results: MineralResult[]): Interpretation {
     };
   }
 
-  const names = results.map(r => r.name.toLowerCase());
-  const has = (s: string) => names.some(n => n.includes(s));
+  const names = results.map((r) => r.name.toLowerCase());
+  const has = (s: string) => names.some((n) => n.includes(s));
 
   const gossan = has("limonita") || has("goethita");
   const cuarzo = has("cuarzo");
@@ -108,7 +108,8 @@ function buildInterpretationClient(results: MineralResult[]): Interpretation {
 
   const eco: string[] = [];
   if (cu_sec || cu_sulf) eco.push("Potencial Cu (especies de cobre presentes)");
-  if ((pirita || cu_sulf) && cuarzo) eco.push("Posible Au/Ag asociado a sulfuros en vetas de cuarzo (no visible a simple vista)");
+  if ((pirita || cu_sulf) && cuarzo)
+    eco.push("Posible Au/Ag asociado a sulfuros en vetas de cuarzo (no visible a simple vista)");
   if (pbzn) eco.push("Pb/Zn accesorios podrían adicionar valor");
   if (!eco.length) eco.push("Sin indicadores claros de metales de alto valor en superficie");
 
@@ -144,23 +145,23 @@ export default function AnalisisPage() {
   const [adj, setAdj] = React.useState<CommodityAdjustments>({
     Cobre: { recovery: 0.88, payable: 0.96 },
     Zinc: { recovery: 0.85, payable: 0.85 },
-    Plomo: { recovery: 0.90, payable: 0.90 },
+    Plomo: { recovery: 0.9, payable: 0.9 },
   });
 
-  // **NUEVO**: Precios y payables por commodity (para PDF Económico)
+  // Precios y payables por commodity (para PDF Económico)
   const [prices, setPrices] = React.useState<Record<"Cu" | "Zn" | "Pb" | "Au" | "Ag", number>>({
     Cu: 9.0,
     Zn: 2.7,
     Pb: 2.1,
     Au: 75.0,
-    Ag: 0.90,
+    Ag: 0.9,
   });
   const [payables, setPayables] = React.useState<Record<"Cu" | "Zn" | "Pb" | "Au" | "Ag", number>>({
     Cu: 0.85,
     Zn: 0.85,
     Pb: 0.85,
     Au: 0.92,
-    Ag: 0.90,
+    Ag: 0.9,
   });
 
   // ======= PERSISTENCIA EN LOCALSTORAGE (solo preferencias) =======
@@ -171,17 +172,38 @@ export default function AnalisisPage() {
       const pa = localStorage.getItem("mq_payables");
       const adjStr = localStorage.getItem("mq_process_adj");
       if (c) setCurrency(c as any);
-      if (p) setPrices(prev => ({ ...prev, ...JSON.parse(p) }));
-      if (pa) setPayables(prev => ({ ...prev, ...JSON.parse(pa) }));
-      if (adjStr) setAdj(prev => ({ ...prev, ...JSON.parse(adjStr) }));
-    } catch {}
+      if (p) setPrices((prev) => ({ ...prev, ...JSON.parse(p) }));
+      if (pa) setPayables((prev) => ({ ...prev, ...JSON.parse(pa) }));
+      if (adjStr) setAdj((prev) => ({ ...prev, ...JSON.parse(adjStr) }));
+    } catch {
+      // ignore
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  React.useEffect(() => { try { localStorage.setItem("mq_currency", String(currency)); } catch {} }, [currency]);
-  React.useEffect(() => { try { localStorage.setItem("mq_prices", JSON.stringify(prices)); } catch {} }, [prices]);
-  React.useEffect(() => { try { localStorage.setItem("mq_payables", JSON.stringify(payables)); } catch {} }, [payables]);
-  React.useEffect(() => { try { localStorage.setItem("mq_process_adj", JSON.stringify(adj)); } catch {} }, [adj]);
+  React.useEffect(() => {
+    try {
+      localStorage.setItem("mq_currency", String(currency));
+    } catch {}
+  }, [currency]);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem("mq_prices", JSON.stringify(prices));
+    } catch {}
+  }, [prices]);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem("mq_payables", JSON.stringify(payables));
+    } catch {}
+  }, [payables]);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem("mq_process_adj", JSON.stringify(adj));
+    } catch {}
+  }, [adj]);
   // ======= FIN PERSISTENCIA =======
 
   // Resultados
@@ -218,7 +240,7 @@ export default function AnalisisPage() {
   // Handlers de UI
   const setNum = (metal: "Cobre" | "Zinc" | "Plomo", field: "recovery" | "payable", val: string) => {
     const pct = Math.max(0, Math.min(100, Number(val)));
-    setAdj(prev => ({
+    setAdj((prev) => ({
       ...prev,
       [metal]: { ...prev[metal], [field]: isFinite(pct) ? pct / 100 : prev[metal][field] },
     }));
@@ -278,18 +300,46 @@ export default function AnalisisPage() {
       setLoadingNearby(true);
       setErrorNearby(null);
       setNearbyItems([]);
-      const res = await fetch(`/api/geosources?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`);
-      const j = await res.json();
-      if (!res.ok) {
-        setErrorNearby(j?.error || "Error al obtener yacimientos");
-        setNearbyItems([]);
-        setToast("Error al buscar yacimientos.");
+      // 1) detectar país (API espera lat & lng)
+      const ctxResp = await fetch(
+        `/api/geocontext?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lon)}`
+      );
+      const ctxJson = await ctxResp.json();
+
+      const countryName =
+        ctxJson?.country ||
+        ctxJson?.name ||
+        (ctxJson?.code === "PE" ? "Perú" : ctxJson?.code) ||
+        "Global";
+
+      // 2) pedir fuentes para el país detectado
+      const srcResp = await fetch(`/api/geosources?country=${encodeURIComponent(countryName)}`);
+      const srcJson = await srcResp.json();
+      if (!srcResp.ok) {
+        setErrorNearby(srcJson?.error || "Error obteniendo fuentes");
+        setToast("Error al obtener fuentes geoespaciales.");
+        setLoadingNearby(false);
+        return;
+      }
+
+      const sources = Array.isArray(srcJson.sources) ? srcJson.sources : [];
+      if (!sources.length) {
+        setToast("No hay fuentes configuradas para este país (usar fallback global).");
       } else {
-        const items = Array.isArray(j.items) ? j.items : [];
-        setNearbyItems(items);
-        if (!items.length) setToast("No se encontraron yacimientos cercanos.");
+        setToast(`Fuentes encontradas: ${sources.map((s: any) => s.name).slice(0, 3).join(", ")}`);
+      }
+
+      // 3) Intentar leer `items` si el backend los retorna
+      const items = Array.isArray(srcJson.items) ? (srcJson.items as GeoSourceItem[]) : [];
+      setNearbyItems(items);
+
+      if (!items.length) {
+        setToast(
+          "No se encontraron yacimientos automáticamente. Revisa las fuentes en el panel para investigar."
+        );
       }
     } catch (err: any) {
+      console.error("[Nearby] Error:", err);
       setErrorNearby(err?.message || "Error de red");
       setNearbyItems([]);
       setToast("Error de red buscando yacimientos.");
@@ -317,19 +367,23 @@ export default function AnalisisPage() {
     try {
       const safeAdj = {
         Cobre: { recovery: adj?.Cobre?.recovery ?? 0.85, payable: adj?.Cobre?.payable ?? 0.96 },
-        Zinc:  { recovery: adj?.Zinc?.recovery  ?? 0.85, payable: adj?.Zinc?.payable  ?? 0.96 },
-        Plomo: { recovery: adj?.Plomo?.recovery ?? 0.90, payable: adj?.Plomo?.payable ?? 0.90 },
+        Zinc: { recovery: adj?.Zinc?.recovery ?? 0.85, payable: adj?.Zinc?.payable ?? 0.96 },
+        Plomo: { recovery: adj?.Plomo?.recovery ?? 0.9, payable: adj?.Plomo?.payable ?? 0.9 },
       };
 
       const econCurrency = (currency === "PEN" ? "PEN" : "USD") as "USD" | "PEN";
       const econOverrides = {
         currency: econCurrency,
-        prices:  { ...prices },
+        prices: { ...prices },
         payables: { ...payables },
       };
 
-      // Construyo opts con nearbySelected
-      const byImage = perImage.map((p) => ({ filename: p.fileName, minerals: p.results, excluded: null }));
+      const byImage = perImage.map((p) => ({
+        filename: p.fileName,
+        minerals: p.results,
+        excluded: null,
+      }));
+
       const opts = {
         title: `Reporte ${sampleCode}`,
         note: "Advertencia: Informe preliminar, referencial; requiere validación con ensayo químico.",
@@ -338,9 +392,15 @@ export default function AnalisisPage() {
         dateISO: new Date().toISOString(),
         econ: econOverrides,
         nearbySources: nearbySelected || [],
+        processAdj: safeAdj,
+        images: imagesDataURL, // reservado para integrar miniaturas en PDF si buildReportPdfPlus lo soporta
       };
 
-      const doc = await (buildReportPdfPlus as any)({ mixGlobal: globalResults, byImage, opts } as any);
+      const doc = await (buildReportPdfPlus as any)({
+        mixGlobal: globalResults,
+        byImage,
+        opts,
+      } as any);
       const buffer = doc.output("arraybuffer");
       downloadPdf(new Uint8Array(buffer), `Reporte_${sampleCode}.pdf`);
     } catch (e: any) {
@@ -394,13 +454,11 @@ export default function AnalisisPage() {
 
   /* ===================== NUEVO: limpiar y preparar nuevo análisis ===================== */
   function handleNewAnalysis() {
-    // incrementa el contador de sesión y genera nuevo código
     const next = sessionCounter + 1;
     setSessionCounter(next);
     const newCode = fmtCode(next);
     setSampleCode(newCode);
 
-    // limpiar estados principales para iniciar nuevo análisis
     setPhotos([]);
     setImagesDataURL([]);
     setGeo(null);
@@ -429,10 +487,15 @@ export default function AnalisisPage() {
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <h1 className="text-lg font-semibold">Cámara • Ubicación • Análisis</h1>
           <div className="flex items-center gap-2">
-            <button onClick={handleNewAnalysis} className="px-3 py-1 rounded bg-white/20 hover:bg-white/30">
+            <button
+              onClick={handleNewAnalysis}
+              className="px-3 py-1 rounded bg-white/20 hover:bg-white/30"
+            >
               Nuevo Análisis
             </button>
-            <Link href="/" className="px-3 py-1 rounded bg-white/20 hover:bg-white/30">Inicio</Link>
+            <Link href="/" className="px-3 py-1 rounded bg-white/20 hover:bg-white/30">
+              Inicio
+            </Link>
           </div>
         </div>
       </header>
@@ -443,14 +506,19 @@ export default function AnalisisPage() {
           <div className="flex flex-wrap items-end gap-4 mb-4">
             <div>
               <label className="text-sm text-gray-700">Código de muestra</label>
-              <input value={sampleCode} onChange={(e) => setSampleCode(e.target.value)}
-                     className="mt-1 border rounded px-3 py-2" />
+              <input
+                value={sampleCode}
+                onChange={(e) => setSampleCode(e.target.value)}
+                className="mt-1 border rounded px-3 py-2"
+              />
             </div>
             <div>
               <label className="text-sm text-gray-700">Moneda</label>
-              <select value={currency}
-                      onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
-                      className="mt-1 border rounded px-3 py-2">
+              <select
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
+                className="mt-1 border rounded px-3 py-2"
+              >
                 <option value="USD">USD</option>
                 <option value="PEN">PEN</option>
                 <option value="EUR">EUR</option>
@@ -462,22 +530,32 @@ export default function AnalisisPage() {
           <div className="border rounded-lg p-3 bg-gray-50 mb-4">
             <div className="font-semibold mb-2">Recuperación y Payable (proceso)</div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              {(["Cobre", "Zinc", "Plomo"] as const).map(metal => (
+              {(["Cobre", "Zinc", "Plomo"] as const).map((metal) => (
                 <div key={metal} className="border rounded p-2 bg-white">
                   <div className="text-sm font-medium mb-1">{metal}</div>
                   <div className="flex items-center gap-2">
                     <label className="text-xs w-12">Rec %</label>
-                    <input type="number" min={0} max={100} step={1}
-                           value={Math.round((adj[metal]?.recovery ?? 0) * 100)}
-                           onChange={(e) => setNum(metal, "recovery", e.target.value)}
-                           className="border rounded px-2 py-1 w-14 text-sm" />
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={Math.round((adj[metal]?.recovery ?? 0) * 100)}
+                      onChange={(e) => setNum(metal, "recovery", e.target.value)}
+                      className="border rounded px-2 py-1 w-14 text-sm"
+                    />
                   </div>
                   <div className="flex items-center gap-2 mt-2">
                     <label className="text-xs w-12">Pay %</label>
-                    <input type="number" min={0} max={100} step={1}
-                           value={Math.round((adj[metal]?.payable ?? 0) * 100)}
-                           onChange={(e) => setNum(metal, "payable", e.target.value)}
-                           className="border rounded px-2 py-1 w-14 text-sm" />
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={Math.round((adj[metal]?.payable ?? 0) * 100)}
+                      onChange={(e) => setNum(metal, "payable", e.target.value)}
+                      className="border rounded px-2 py-1 w-14 text-sm"
+                    />
                   </div>
                 </div>
               ))}
@@ -488,21 +566,31 @@ export default function AnalisisPage() {
           <div className="border rounded-lg p-3 bg-gray-50 mb-4">
             <div className="font-semibold mb-2">Economía: Precios y Payables por commodity</div>
             <p className="text-xs text-gray-600 mb-2">
-              Edita el <b>precio</b> (por unidad mostrada en PDF) y el <b>payable</b> (0–1) para cada commodity.
-              Se reflejarán en la tabla económica del PDF general.
+              Edita el <b>precio</b> (por unidad mostrada en PDF) y el <b>payable</b> (0–1) para cada
+              commodity. Se reflejarán en la tabla económica del PDF general.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {(["Cu","Zn","Pb","Au","Ag"] as const).map(code => (
+              {(["Cu", "Zn", "Pb", "Au", "Ag"] as const).map((code) => (
                 <div key={code} className="border rounded p-2 bg-white">
                   <div className="text-sm font-medium mb-2">
-                    {{Cu:"Cobre (Cu)", Zn:"Zinc (Zn)", Pb:"Plomo (Pb)", Au:"Oro (Au)", Ag:"Plata (Ag)"}[code]}
+                    {
+                      {
+                        Cu: "Cobre (Cu)",
+                        Zn: "Zinc (Zn)",
+                        Pb: "Plomo (Pb)",
+                        Au: "Oro (Au)",
+                        Ag: "Plata (Ag)",
+                      }[code]
+                    }
                   </div>
                   <div className="flex items-center gap-2">
                     <label className="text-xs w-16">Precio</label>
                     <input
-                      type="number" step="0.01" className="border rounded px-2 py-1 w-28 text-sm"
+                      type="number"
+                      step="0.01"
+                      className="border rounded px-2 py-1 w-28 text-sm"
                       value={String(prices[code])}
-                      onChange={(e)=> setPrices(p=>({...p, [code]: Number(e.target.value || 0)}))}
+                      onChange={(e) => setPrices((p) => ({ ...p, [code]: Number(e.target.value || 0) }))}
                       placeholder="Precio"
                       title={`Precio para ${code}`}
                     />
@@ -510,11 +598,15 @@ export default function AnalisisPage() {
                   <div className="flex items-center gap-2 mt-2">
                     <label className="text-xs w-16">Payable</label>
                     <input
-                      type="number" step="0.01" min="0" max="1" className="border rounded px-2 py-1 w-28 text-sm"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="1"
+                      className="border rounded px-2 py-1 w-28 text-sm"
                       value={String(payables[code])}
-                      onChange={(e)=> {
+                      onChange={(e) => {
                         const v = Math.max(0, Math.min(1, Number(e.target.value || 0)));
-                        setPayables(p=>({...p, [code]: v}));
+                        setPayables((p) => ({ ...p, [code]: v }));
                       }}
                       placeholder="0–1"
                       title={`Payable para ${code}`}
@@ -531,7 +623,6 @@ export default function AnalisisPage() {
 
           <CameraCapture onPhotos={handlePhotos} resetSignal={sessionCounter} />
 
-
           {extra > 0 && (
             <div className="mt-3 rounded bg-yellow-50 border border-yellow-300 px-3 py-2 text-sm text-yellow-800">
               Solo se procesarán 6 fotos. El resto será ignorado.
@@ -542,14 +633,14 @@ export default function AnalisisPage() {
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3">
               {photos.map((p, i) => (
                 <div key={i} className="border rounded overflow-hidden">
-                  <img src={p.url} className="w-full h-28 object-cover" />
+                  <img src={p.url} className="w-full h-28 object-cover" alt={p.file.name} />
                   <div className="px-2 py-1 text-[11px] truncate">{p.file.name}</div>
                 </div>
               ))}
             </div>
           )}
 
-          <GeoCapture onChange={setGeo} />
+          <GeoCapture onChange={handleGeo} />
 
           {/* Panel de fuentes geoespaciales + botón para buscar nearby */}
           <div className="mt-3 mb-3">
@@ -567,28 +658,62 @@ export default function AnalisisPage() {
               {errorNearby && <div className="text-red-600 text-sm">{errorNearby}</div>}
             </div>
 
-            <GeoSourcesPanel
-              items={nearbyItems}
-              onInclude={(it: GeoSourceItem) => {
-                toggleNearbySelect(it);
-                const exists = nearbySelected.find(s => s.id === it.id);
-                setToast(exists ? `Removido: ${it.name}` : `Seleccionado: ${it.name}`);
-              }}
-            />
+            <GeoSourcesPanel />
+
+            <div className="mt-3">
+              <h4 className="font-medium mb-2">Resultados (yacimientos cercanos)</h4>
+              {loadingNearby && <div className="text-sm text-gray-600">Buscando...</div>}
+              {!loadingNearby && nearbyItems.length === 0 && (
+                <div className="text-sm text-gray-500">No hay yacimientos devueltos automáticamente.</div>
+              )}
+              {nearbyItems.length > 0 && (
+                <ul className="space-y-2">
+                  {nearbyItems.map((it) => (
+                    <li key={it.id} className="border rounded p-2 flex items-center justify-between">
+                      <div>
+                        <div className="font-medium text-sm">{it.name || "Sin nombre"}</div>
+                        <div className="text-xs text-gray-500">
+                          {it.latitude?.toFixed(5)}, {it.longitude?.toFixed(5)}
+                        </div>
+                        <div className="text-xs text-gray-500">{it.source_name || it.source_url}</div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => toggleNearbySelect(it)}
+                          className="px-2 py-1 rounded bg-sky-50 text-sky-700 text-xs"
+                        >
+                          {nearbySelected.find((s) => s.id === it.id) ? "Remover" : "Incluir"}
+                        </button>
+                        <a
+                          href={it.source_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-2 py-1 bg-gray-200 rounded text-xs"
+                        >
+                          Fuente
+                        </a>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
 
           <div className="flex gap-3 mt-3">
             <button
               onClick={handleAnalyze}
               disabled={!canAnalyze || busyAnalyze}
-              className="px-4 py-2 bg-indigo-600 text-white rounded disabled:opacity-50">
+              className="px-4 py-2 bg-indigo-600 text-white rounded disabled:opacity-50"
+            >
               {busyAnalyze ? "Analizando..." : "Analizar"}
             </button>
 
             <button
               onClick={handleExportGeneralPdf}
               disabled={!globalResults.length || busyGeneralPdf}
-              className="px-4 py-2 bg-emerald-600 text-white rounded disabled:opacity-50">
+              className="px-4 py-2 bg-emerald-600 text-white rounded disabled:opacity-50"
+            >
               {busyGeneralPdf ? "Generando PDF…" : "PDF general"}
             </button>
           </div>
@@ -614,7 +739,8 @@ export default function AnalisisPage() {
                         <td className="px-3 py-2 text-right">
                           <button
                             onClick={() => openMineral(r)}
-                            className="px-2 py-1 bg-blue-600 text-white text-xs rounded">
+                            className="px-2 py-1 bg-blue-600 text-white text-xs rounded"
+                          >
                             Ficha
                           </button>
                         </td>
@@ -646,9 +772,15 @@ export default function AnalisisPage() {
               {interpretation && (
                 <div className="border rounded-xl p-3 bg-sky-50 mb-4">
                   <b>Interpretación preliminar</b>
-                  <p className="text-sm mt-1"><b>Geología:</b> {fmt(interpretation.geology)}</p>
-                  <p className="text-sm mt-1"><b>Economía:</b> {fmt(interpretation.economics)}</p>
-                  <p className="text-sm mt-1"><b>Advertencias:</b> {fmt(interpretation.caveats)}</p>
+                  <p className="text-sm mt-1">
+                    <b>Geología:</b> {fmt(interpretation.geology)}
+                  </p>
+                  <p className="text-sm mt-1">
+                    <b>Economía:</b> {fmt(interpretation.economics)}
+                  </p>
+                  <p className="text-sm mt-1">
+                    <b>Advertencias:</b> {fmt(interpretation.caveats)}
+                  </p>
                 </div>
               )}
 
@@ -658,7 +790,9 @@ export default function AnalisisPage() {
                   <b>Imágenes excluidas</b>
                   <ul className="text-sm mt-2 ml-4 list-disc">
                     {excluded.map((e, i) => (
-                      <li key={i}>{e.fileName} — {e.reason}</li>
+                      <li key={i}>
+                        {e.fileName} — {e.reason}
+                      </li>
                     ))}
                   </ul>
                 </div>
@@ -667,17 +801,33 @@ export default function AnalisisPage() {
               {/* Seleccionados (yacimientos incluidos) */}
               {nearbySelected.length > 0 && (
                 <div className="border rounded-xl p-3 bg-white mt-4">
-                  <div className="font-semibold mb-2">Yacimientos incluidos ({nearbySelected.length})</div>
+                  <div className="font-semibold mb-2">
+                    Yacimientos incluidos ({nearbySelected.length})
+                  </div>
                   <ul className="text-sm space-y-2">
                     {nearbySelected.map((s) => (
                       <li key={s.id} className="flex items-center justify-between">
                         <div>
                           <div className="font-medium">{s.name || "Sin nombre"}</div>
-                          <div className="text-xs text-gray-500">{s.latitude?.toFixed(5)}, {s.longitude?.toFixed(5)}</div>
+                          <div className="text-xs text-gray-500">
+                            {s.latitude?.toFixed(5)}, {s.longitude?.toFixed(5)}
+                          </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <a href={s.source_url} target="_blank" rel="noreferrer" className="text-xs underline text-blue-600">Fuente</a>
-                          <button onClick={() => toggleNearbySelect(s)} className="text-xs px-2 py-1 rounded bg-gray-200 hover:bg-gray-300">Quitar</button>
+                          <a
+                            href={s.source_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs underline text-blue-600"
+                          >
+                            Fuente
+                          </a>
+                          <button
+                            onClick={() => toggleNearbySelect(s)}
+                            className="text-xs px-2 py-1 rounded bg-gray-200 hover:bg-gray-300"
+                          >
+                            Quitar
+                          </button>
                         </div>
                       </li>
                     ))}
@@ -695,21 +845,27 @@ export default function AnalisisPage() {
           <div className="bg-white rounded-xl shadow-xl max-w-lg w-full">
             <div className="flex justify-between border-b px-4 py-2">
               <h4 className="font-semibold">{modalInfo?.nombre || modalMineral?.name}</h4>
-              <button onClick={() => setModalOpen(false)} className="px-2 py-1 bg-gray-200 rounded">Cerrar</button>
+              <button onClick={() => setModalOpen(false)} className="px-2 py-1 bg-gray-200 rounded">
+                Cerrar
+              </button>
             </div>
             <div className="p-4 text-sm">
-              {loadingInfo ? "Cargando..." :
-                modalMineral && (
-                  <>
-                    <p><b>% en muestra:</b> {modalMineral.pct.toFixed(2)}%</p>
-                    <button
-                      onClick={exportMineralPdf}
-                      className="mt-3 bg-emerald-600 text-white px-3 py-2 rounded text-sm"
-                      disabled={busyMineralPdf}>
-                      PDF Mineral
-                    </button>
-                  </>
-                )}
+              {loadingInfo
+                ? "Cargando..."
+                : modalMineral && (
+                    <>
+                      <p>
+                        <b>% en muestra:</b> {modalMineral.pct.toFixed(2)}%
+                      </p>
+                      <button
+                        onClick={exportMineralPdf}
+                        className="mt-3 bg-emerald-600 text-white px-3 py-2 rounded text-sm"
+                        disabled={busyMineralPdf}
+                      >
+                        PDF Mineral
+                      </button>
+                    </>
+                  )}
             </div>
           </div>
         </div>
