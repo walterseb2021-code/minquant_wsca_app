@@ -16,6 +16,7 @@ import {
 } from "../../lib/pdf";
 
 import { buildReportPdfPlus } from "../../lib/pdf_plus"; // PDF general con sección económica e interpretación
+import { suggestFromMinerals } from "../../lib/minerals";
 
 /* ===================== Helpers de archivos/imagenes ===================== */
 async function fileToDataURL(file: File): Promise<string> {
@@ -336,6 +337,8 @@ export default function AnalisisPage() {
   const [perImage, setPerImage] = React.useState<{ fileName: string; results: MineralResult[] }[]>([]);
   const [excluded, setExcluded] = React.useState<{ fileName: string; reason: string }[]>([]);
   const [interpretation, setInterpretation] = React.useState<Interpretation | null>(null);
+// Sugerencias automáticas (PASO 3.2)
+const [autoSuggestion, setAutoSuggestion] = React.useState<any>(null);
 
   // Estados UI
   const [busyAnalyze, setBusyAnalyze] = React.useState(false);
@@ -413,6 +416,20 @@ export default function AnalisisPage() {
 
       const inter: Interpretation | null = j?.interpretation ?? buildInterpretationClient(results);
       setInterpretation(inter);
+      // PASO 3.2 — generar sugerencias automáticas
+try {
+  const countryCode =
+    geo?.countryCode ||
+    geo?.country ||
+    geo?.point?.country ||
+    null;
+
+  const sug = suggestFromMinerals(results, countryCode || undefined);
+  setAutoSuggestion(sug);
+} catch (err) {
+  console.warn("No se pudieron generar sugerencias automáticas:", err);
+}
+
     } catch (e: any) {
       console.error("[Analyze] Error:", e);
       setToast(e?.message || "Error analizando");
