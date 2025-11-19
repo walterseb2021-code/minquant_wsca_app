@@ -954,6 +954,29 @@ try {
                   </p>
                 </div>
               )}
+{/* === Sugerencias automáticas (PASO 3.3) === */}
+{autoSuggestion && (
+  <div className="border rounded-xl p-3 bg-emerald-50 mb-4">
+    <div className="font-semibold mb-2 text-emerald-800">
+      Sugerencias automáticas disponibles
+    </div>
+
+    <p className="text-sm text-gray-700">
+      Basado en los minerales detectados y la zona analizada.
+    </p>
+
+    <div className="text-sm mt-2">
+      <b>País:</b> {autoSuggestion.country === "PE" ? "Perú" : "Global"} <br />
+      <b>Metales detectados:</b> {autoSuggestion.commodities.length > 0 
+        ? autoSuggestion.commodities.join(", ")
+        : "Ninguno identificado"}
+    </div>
+
+    <div className="text-sm text-gray-600 mt-2">
+      Puedes aplicar estas sugerencias automáticamente en el siguiente paso.
+    </div>
+  </div>
+)}
 
               {/* Excluidas */}
               {excluded.length > 0 && (
