@@ -64,6 +64,7 @@ type MineralInfoWeb = {
   fuentes?: { title: string; url: string }[];
 };
 
+// Mapa sencillo para la ficha individual (por nombre de mineral)
 const PRICE_MAP_USD: Record<string, number> = {
   Oro: 80000,
   Plata: 900,
@@ -75,6 +76,128 @@ const PRICE_MAP_USD: Record<string, number> = {
   Feldespato: 30.2,
 };
 
+/* ======== Configuración de 20 commodities (económico) ======== */
+
+type CommodityCode =
+  | "Au"
+  | "Ag"
+  | "Pt"
+  | "Pd"
+  | "Cu"
+  | "Zn"
+  | "Pb"
+  | "Sn"
+  | "Ni"
+  | "Mo"
+  | "Sb"
+  | "Co"
+  | "V"
+  | "Ti"
+  | "W"
+  | "Li"
+  | "Fe"
+  | "Al"
+  | "Mn"
+  | "REE";
+
+type CommodityConfig = {
+  code: CommodityCode;
+  label: string;
+  group: "Metales preciosos" | "Metales base" | "Críticos / Menores" | "Industriales / Energéticos" | "Tierras raras";
+};
+
+const COMMODITY_CONFIG: CommodityConfig[] = [
+  // Metales preciosos
+  { code: "Au", label: "Oro (Au)", group: "Metales preciosos" },
+  { code: "Ag", label: "Plata (Ag)", group: "Metales preciosos" },
+  { code: "Pt", label: "Platino (Pt)", group: "Metales preciosos" },
+  { code: "Pd", label: "Paladio (Pd)", group: "Metales preciosos" },
+
+  // Metales base
+  { code: "Cu", label: "Cobre (Cu)", group: "Metales base" },
+  { code: "Zn", label: "Zinc (Zn)", group: "Metales base" },
+  { code: "Pb", label: "Plomo (Pb)", group: "Metales base" },
+  { code: "Sn", label: "Estaño (Sn)", group: "Metales base" },
+  { code: "Ni", label: "Níquel (Ni)", group: "Metales base" },
+  { code: "Mo", label: "Molibdeno (Mo)", group: "Metales base" },
+
+  // Críticos / menores
+  { code: "Sb", label: "Antimonio (Sb)", group: "Críticos / Menores" },
+  { code: "Co", label: "Cobalto (Co)", group: "Críticos / Menores" },
+  { code: "V", label: "Vanadio (V)", group: "Críticos / Menores" },
+  { code: "Ti", label: "Titanio (Ti)", group: "Críticos / Menores" },
+  { code: "W", label: "Tungsteno (W)", group: "Críticos / Menores" },
+
+  // Industriales / energéticos
+  { code: "Li", label: "Litio (Li)", group: "Industriales / Energéticos" },
+  { code: "Fe", label: "Hierro (Fe)", group: "Industriales / Energéticos" },
+  { code: "Al", label: "Bauxita / Aluminio (Al)", group: "Industriales / Energéticos" },
+  { code: "Mn", label: "Manganeso (Mn)", group: "Industriales / Energéticos" },
+
+  // Tierras raras
+  { code: "REE", label: "Tierras raras (REE)", group: "Tierras raras" },
+];
+
+// Valores por defecto (estimaciones referenciales, el usuario puede cambiarlos)
+const DEFAULT_PRICES: Record<CommodityCode, number> = {
+  Au: 75.0, // p.ej. USD/gramo equivalente (referencial)
+  Ag: 0.9,
+  Pt: 35.0,
+  Pd: 45.0,
+
+  Cu: 9.0,
+  Zn: 2.7,
+  Pb: 2.1,
+  Sn: 28.0,
+  Ni: 18.0,
+  Mo: 20.0,
+
+  Sb: 10.0,
+  Co: 40.0,
+  V: 15.0,
+  Ti: 5.0,
+  W: 32.0,
+
+  Li: 25.0,
+  Fe: 0.15,
+  Al: 2.0,
+  Mn: 3.0,
+
+  REE: 60.0,
+};
+
+const DEFAULT_PAYABLES: Record<CommodityCode, number> = {
+  // Metales preciosos
+  Au: 0.92,
+  Ag: 0.9,
+  Pt: 0.9,
+  Pd: 0.9,
+
+  // Metales base
+  Cu: 0.96,
+  Zn: 0.85,
+  Pb: 0.9,
+  Sn: 0.95,
+  Ni: 0.95,
+  Mo: 0.97,
+
+  // Críticos / menores
+  Sb: 0.9,
+  Co: 0.9,
+  V: 0.88,
+  Ti: 0.85,
+  W: 0.95,
+
+  // Industriales / energéticos
+  Li: 0.85,
+  Fe: 0.98,
+  Al: 0.9,
+  Mn: 0.9,
+
+  // Tierras raras
+  REE: 0.9,
+};
+
 /* ===================== Interpretación en cliente (fallback) ===================== */
 type Interpretation = { geology: string; economics: string; caveats: string };
 
@@ -83,7 +206,8 @@ function buildInterpretationClient(results: MineralResult[]): Interpretation {
     return {
       geology: "—",
       economics: "—",
-      caveats: "• Estimación preliminar • Confirmar con laboratorio (Au/Ag por fuego/AA; Cu/Pb/Zn por ICP/AA).",
+      caveats:
+        "• Estimación preliminar • Confirmar con laboratorio (Au/Ag por fuego/AA; Cu/Pb/Zn por ICP/AA).",
     };
   }
 
@@ -141,28 +265,16 @@ export default function AnalisisPage() {
   const [sampleCode, setSampleCode] = React.useState<string>(fmtCode(1));
   const [currency, setCurrency] = React.useState<CurrencyCode>("USD");
 
-  // Ajustes de recuperaciones/payables (por proceso)
+  // Ajustes de recuperaciones/payables por proceso (de momento Cu/Zn/Pb; luego podemos extender)
   const [adj, setAdj] = React.useState<CommodityAdjustments>({
     Cobre: { recovery: 0.88, payable: 0.96 },
     Zinc: { recovery: 0.85, payable: 0.85 },
     Plomo: { recovery: 0.9, payable: 0.9 },
   });
 
-  // Precios y payables por commodity (para PDF Económico)
-  const [prices, setPrices] = React.useState<Record<"Cu" | "Zn" | "Pb" | "Au" | "Ag", number>>({
-    Cu: 9.0,
-    Zn: 2.7,
-    Pb: 2.1,
-    Au: 75.0,
-    Ag: 0.9,
-  });
-  const [payables, setPayables] = React.useState<Record<"Cu" | "Zn" | "Pb" | "Au" | "Ag", number>>({
-    Cu: 0.85,
-    Zn: 0.85,
-    Pb: 0.85,
-    Au: 0.92,
-    Ag: 0.9,
-  });
+  // Precios y payables por commodity (para PDF económico) — ahora 20 commodities
+  const [prices, setPrices] = React.useState<Record<CommodityCode, number>>(DEFAULT_PRICES);
+  const [payables, setPayables] = React.useState<Record<CommodityCode, number>>(DEFAULT_PAYABLES);
 
   // ======= PERSISTENCIA EN LOCALSTORAGE (solo preferencias) =======
   React.useEffect(() => {
@@ -171,10 +283,23 @@ export default function AnalisisPage() {
       const p = localStorage.getItem("mq_prices");
       const pa = localStorage.getItem("mq_payables");
       const adjStr = localStorage.getItem("mq_process_adj");
+
       if (c) setCurrency(c as any);
-      if (p) setPrices((prev) => ({ ...prev, ...JSON.parse(p) }));
-      if (pa) setPayables((prev) => ({ ...prev, ...JSON.parse(pa) }));
-      if (adjStr) setAdj((prev) => ({ ...prev, ...JSON.parse(adjStr) }));
+
+      if (p) {
+        const parsed = JSON.parse(p) as Partial<Record<CommodityCode, number>>;
+        setPrices((prev) => ({ ...prev, ...parsed }));
+      }
+
+      if (pa) {
+        const parsed = JSON.parse(pa) as Partial<Record<CommodityCode, number>>;
+        setPayables((prev) => ({ ...prev, ...parsed }));
+      }
+
+      if (adjStr) {
+        // Se mantiene la estructura anterior, pero el usuario puede editarla en la UI de procesos
+        setAdj((prev) => ({ ...prev, ...JSON.parse(adjStr) }));
+      }
     } catch {
       // ignore
     }
@@ -237,7 +362,7 @@ export default function AnalisisPage() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  // Handlers de UI
+  // Handlers de UI (proceso Cu/Zn/Pb)
   const setNum = (metal: "Cobre" | "Zinc" | "Plomo", field: "recovery" | "payable", val: string) => {
     const pct = Math.max(0, Math.min(100, Number(val)));
     setAdj((prev) => ({
@@ -269,7 +394,9 @@ export default function AnalisisPage() {
 
       for (const p of subset) {
         const blob = await resizeImageFile(p.file, 1280, 0.7);
-        const name = (p.file.name || "foto.jpg").replace(/\.(png|jpg|jpeg|webp)$/i, "") + "_cmp.jpg";
+        const name = (p.file.name || "foto.jpg")
+          .replace(/\.(png|jpg|jpeg|webp)$/i, "")
+          .concat("_cmp.jpg");
         form.append("images", new File([blob], name, { type: "image/jpeg" }));
       }
 
@@ -300,7 +427,7 @@ export default function AnalisisPage() {
       setLoadingNearby(true);
       setErrorNearby(null);
       setNearbyItems([]);
-      // 1) detectar país (API espera lat & lng)
+
       const ctxResp = await fetch(
         `/api/geocontext?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lon)}`
       );
@@ -312,7 +439,6 @@ export default function AnalisisPage() {
         (ctxJson?.code === "PE" ? "Perú" : ctxJson?.code) ||
         "Global";
 
-      // 2) pedir fuentes para el país detectado
       const srcResp = await fetch(`/api/geosources?country=${encodeURIComponent(countryName)}`);
       const srcJson = await srcResp.json();
       if (!srcResp.ok) {
@@ -329,7 +455,6 @@ export default function AnalisisPage() {
         setToast(`Fuentes encontradas: ${sources.map((s: any) => s.name).slice(0, 3).join(", ")}`);
       }
 
-      // 3) Intentar leer `items` si el backend los retorna
       const items = Array.isArray(srcJson.items) ? (srcJson.items as GeoSourceItem[]) : [];
       setNearbyItems(items);
 
@@ -393,7 +518,7 @@ export default function AnalisisPage() {
         econ: econOverrides,
         nearbySources: nearbySelected || [],
         processAdj: safeAdj,
-        images: imagesDataURL, // reservado para integrar miniaturas en PDF si buildReportPdfPlus lo soporta
+        images: imagesDataURL,
       };
 
       const doc = await (buildReportPdfPlus as any)({
@@ -481,6 +606,16 @@ export default function AnalisisPage() {
   const extra = Math.max(0, photos.length - 6);
   const fmt = (v: any) => (v == null ? "—" : v);
 
+  // Agrupamos commodities por grupo para la UI
+  const groupedCommodities = React.useMemo(() => {
+    const groups: Record<string, CommodityConfig[]> = {};
+    for (const c of COMMODITY_CONFIG) {
+      if (!groups[c.group]) groups[c.group] = [];
+      groups[c.group].push(c);
+    }
+    return groups;
+  }, []);
+
   return (
     <main className="min-h-screen">
       <header className="w-full py-3 px-5 bg-gradient-to-r from-cyan-600 to-emerald-600 text-white">
@@ -528,7 +663,7 @@ export default function AnalisisPage() {
 
           {/* Recuperación/Payable por proceso */}
           <div className="border rounded-lg p-3 bg-gray-50 mb-4">
-            <div className="font-semibold mb-2">Recuperación y Payable (proceso)</div>
+            <div className="font-semibold mb-2">Recuperación y Payable (proceso Cu/Zn/Pb)</div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {(["Cobre", "Zinc", "Plomo"] as const).map((metal) => (
                 <div key={metal} className="border rounded p-2 bg-white">
@@ -562,62 +697,81 @@ export default function AnalisisPage() {
             </div>
           </div>
 
-          {/* Precios y Payables por commodity */}
+          {/* Precios y Payables por commodity (20 commodities) */}
           <div className="border rounded-lg p-3 bg-gray-50 mb-4">
-            <div className="font-semibold mb-2">Economía: Precios y Payables por commodity</div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="font-semibold">Economía: Precios y Payables por commodity</div>
+              <button
+                type="button"
+                onClick={() => {
+                  setPrices(DEFAULT_PRICES);
+                  setPayables(DEFAULT_PAYABLES);
+                  setToast("Valores económicos restaurados por defecto.");
+                }}
+                className="text-xs px-2 py-1 rounded bg-gray-200 hover:bg-gray-300"
+              >
+                Restaurar por defecto
+              </button>
+            </div>
             <p className="text-xs text-gray-600 mb-2">
-              Edita el <b>precio</b> (por unidad mostrada en PDF) y el <b>payable</b> (0–1) para cada
-              commodity. Se reflejarán en la tabla económica del PDF general.
+              Edita el <b>precio</b> (unidad referencial que se mostrará en el PDF) y el <b>payable</b> (0–1)
+              para cada commodity. Estos coeficientes se usarán en la estimación económica del PDF general.
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {(["Cu", "Zn", "Pb", "Au", "Ag"] as const).map((code) => (
-                <div key={code} className="border rounded p-2 bg-white">
-                  <div className="text-sm font-medium mb-2">
-                    {
-                      {
-                        Cu: "Cobre (Cu)",
-                        Zn: "Zinc (Zn)",
-                        Pb: "Plomo (Pb)",
-                        Au: "Oro (Au)",
-                        Ag: "Plata (Ag)",
-                      }[code]
-                    }
+
+            <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
+              {Object.entries(groupedCommodities).map(([groupName, items]) => (
+                <div key={groupName} className="border rounded-md bg-white">
+                  <div className="px-2 py-1 border-b text-xs font-semibold bg-gray-100">
+                    {groupName}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs w-16">Precio</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      className="border rounded px-2 py-1 w-28 text-sm"
-                      value={String(prices[code])}
-                      onChange={(e) => setPrices((p) => ({ ...p, [code]: Number(e.target.value || 0) }))}
-                      placeholder="Precio"
-                      title={`Precio para ${code}`}
-                    />
-                  </div>
-                  <div className="flex items-center gap-2 mt-2">
-                    <label className="text-xs w-16">Payable</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      max="1"
-                      className="border rounded px-2 py-1 w-28 text-sm"
-                      value={String(payables[code])}
-                      onChange={(e) => {
-                        const v = Math.max(0, Math.min(1, Number(e.target.value || 0)));
-                        setPayables((p) => ({ ...p, [code]: v }));
-                      }}
-                      placeholder="0–1"
-                      title={`Payable para ${code}`}
-                    />
+                  <div className="p-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {items.map((cfg) => (
+                      <div key={cfg.code} className="border rounded p-2 bg-white">
+                        <div className="text-xs font-medium mb-1">{cfg.label}</div>
+                        <div className="flex items-center gap-2">
+                          <label className="text-[11px] w-16">Precio</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            className="border rounded px-2 py-1 w-28 text-xs"
+                            value={String(prices[cfg.code])}
+                            onChange={(e) =>
+                              setPrices((p) => ({
+                                ...p,
+                                [cfg.code]: Number(e.target.value || 0),
+                              }))
+                            }
+                            placeholder="Precio"
+                            title={`Precio para ${cfg.label}`}
+                          />
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <label className="text-[11px] w-16">Payable</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            max="1"
+                            className="border rounded px-2 py-1 w-28 text-xs"
+                            value={String(payables[cfg.code])}
+                            onChange={(e) => {
+                              const v = Math.max(0, Math.min(1, Number(e.target.value || 0)));
+                              setPayables((p) => ({ ...p, [cfg.code]: v }));
+                            }}
+                            placeholder="0–1"
+                            title={`Payable para ${cfg.label}`}
+                          />
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               ))}
             </div>
+
             <p className="text-[11px] text-gray-500 mt-2">
-              Nota: Si escoges <b>EUR</b>, internamente se usará USD para el cálculo económico (puedes
-              cambiarlo a PEN/USD si prefieres).
+              Nota: Más adelante estos valores podrán ajustarse automáticamente según el tipo de mineral
+              detectado y la zona (planta / país). Siempre podrás modificarlos manualmente.
             </p>
           </div>
 
