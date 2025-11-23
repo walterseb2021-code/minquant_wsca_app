@@ -747,7 +747,8 @@ export async function buildReportPdfPlus(args: {
   doc.setFontSize(8);
   const footerY = doc.internal.pageSize.getHeight() - 26;
   doc.text(
-    "Nota: Valores referenciales basados en señales minerales; requiere confirmación con ensayo químico. © MinQuant_WSCA",
+    "Nota: Los valores mostrados son referenciales y basados en reconocimiento mineral asistido por IA y precios de mercado aproximados. Requieren validación con ensayos químicos certificados. © MinQuant_WSCA",
+
     margin,
     footerY
   );

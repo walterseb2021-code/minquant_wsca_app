@@ -783,7 +783,9 @@ React.useEffect(() => {
           {/* Economía (20 commodities) */}
           <div className="border rounded-lg p-3 bg-gray-50 mb-4">
             <div className="flex items-center justify-between mb-2">
-              <div className="font-semibold">Economía: Precios y Payables por commodity</div>
+  <div className="font-semibold">
+    Economía – Precios de referencia (editable por el usuario)
+  </div>
 
               <button
                 type="button"
@@ -799,8 +801,11 @@ React.useEffect(() => {
             </div>
 
             <p className="text-xs text-gray-600 mb-2">
-              Edita el <b>precio</b> y el <b>payable</b> (0–1) para cada commodity.
-            </p>
+  Los precios están expresados en <b>USD/g</b> para Au/Ag/Pt/Pd y en <b>USD/kg</b> para el resto
+  de metales. Puedes editar el <b>precio</b> y el <b>payable</b> (0–1) para cada commodity; estos
+  valores se usarán en la estimación económica del PDF.
+</p>
+
 
             <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
               {Object.entries(groupedCommodities).map(([groupName, items]) => (
