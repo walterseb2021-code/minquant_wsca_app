@@ -4,7 +4,7 @@ import React from "react";
 
 /** Tipos mínimos que usamos del catálogo público (public/geo-sources.json) */
 type Layer = {
-  id: string;
+  id?: string;
   title: string;
   service: "WMS" | "WFS" | "XYZ" | "Other";
   url: string;
@@ -52,8 +52,12 @@ export default function GeoSourcesPanel() {
         setLoading(true);
         setError(null);
         const resp = await fetch("/geo-sources.json", { cache: "no-store" });
-        if (!resp.ok) throw new Error("No se pudo leer geo-sources.json");
+        if (!resp.ok) throw new Error("No se pudo leer public/geo-sources.json");
         const json = (await resp.json()) as CatalogJSON;
+
+        // normalizar estructura defensiva
+        if (!Array.isArray(json.countries)) throw new Error("Formato inválido en geo-sources.json");
+
         setCatalog(json);
 
         // seleccionar Perú por defecto si existe; si no, el primero
@@ -98,8 +102,9 @@ export default function GeoSourcesPanel() {
               value={countryCode}
               onChange={(e) => setCountryCode(e.target.value)}
               className="mt-1 border rounded px-3 py-2">
-              {catalog.countries.map((c) => (
-                <option key={c.code} value={c.code}>
+              {catalog.countries.map((c, idx) => (
+                // key robusto: code + índice
+                <option key={`${c.code}-${idx}`} value={c.code}>
                   {c.name} ({c.code})
                 </option>
               ))}
@@ -110,7 +115,7 @@ export default function GeoSourcesPanel() {
           {country?.notes && country.notes.length > 0 && (
             <div className="mt-3 text-xs text-gray-600">
               {country.notes.map((n, i) => (
-                <div key={i}>• {n}</div>
+                <div key={`note-${i}`}>• {n}</div>
               ))}
             </div>
           )}
@@ -118,38 +123,41 @@ export default function GeoSourcesPanel() {
           {/* Lista de capas */}
           <div className="mt-4">
             <h4 className="font-medium mb-2">Capas disponibles</h4>
-            {country && country.layers.length > 0 ? (
+            {country && Array.isArray(country.layers) && country.layers.length > 0 ? (
               <ul className="space-y-2">
-                {country.layers.map((ly) => (
-                  <li key={ly.id} className="border rounded p-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <div className="font-medium text-sm">{ly.title}</div>
-                        <div className="text-[11px] text-gray-500">
-                          {ly.service} • <code className="break-all">{ly.url}</code>
+                {country.layers.map((ly, idx) => {
+                  // generar key segura: id si existe, sino url + idx
+                  const key = ly.id ? `${ly.id}` : `${ly.url}-${idx}`;
+                  return (
+                    <li key={key} className="border rounded p-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div style={{ minWidth: 0 }}>
+                          <div className="font-medium text-sm">{ly.title}</div>
+                          <div className="text-[11px] text-gray-500 break-words">
+                            {ly.service} • <code className="break-all">{ly.url}</code>
+                          </div>
+                          {ly.notes && (
+                            <div className="text-[11px] text-gray-600 mt-1">{ly.notes}</div>
+                          )}
                         </div>
-                        {ly.notes && (
-                          <div className="text-[11px] text-gray-600 mt-1">{ly.notes}</div>
-                        )}
+                        <div className="flex gap-2 shrink-0">
+                          <button
+                            onClick={() => copy(ly.url)}
+                            className="px-2 py-1 bg-blue-600 text-white rounded text-xs">
+                            Copiar URL
+                          </button>
+                          <a
+                            href={ly.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="px-2 py-1 bg-gray-200 rounded text-xs">
+                            Abrir
+                          </a>
+                        </div>
                       </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => copy(ly.url)}
-                          className="px-2 py-1 bg-blue-600 text-white rounded text-xs">
-                          Copiar URL
-                        </button>
-                        {/* Enlace de prueba en nueva pestaña */}
-                        <a
-                          href={ly.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="px-2 py-1 bg-gray-200 rounded text-xs">
-                          Abrir
-                        </a>
-                      </div>
-                    </div>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             ) : (
               <p className="text-sm text-gray-500">No hay capas registradas para este país.</p>

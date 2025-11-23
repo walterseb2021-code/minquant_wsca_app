@@ -1,33 +1,71 @@
-// app/api/geosources/route.ts
 import { NextResponse } from "next/server";
 import { SOURCES } from "@/lib/geo/sources";
 
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const country = searchParams.get("country") || "";
+    const raw = (searchParams.get("country") || "").trim();
 
-    // --- NUEVA LÓGICA ---
-    // 1) SI ES PERÚ → SOLO INGEMMET
-    if (country === "Perú") {
-      const peru = SOURCES.filter((s) => s.country === "Perú");
-      return NextResponse.json({ sources: peru });
+    // Normalizamos a minúsculas sin acentos
+    const country = raw
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+
+    // === PERÚ ===
+    if (country === "peru" || country === "pe") {
+      const peru = SOURCES.filter(
+        (s) =>
+          s.country
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .toLowerCase() === "peru"
+      );
+
+      return new NextResponse(JSON.stringify({ sources: peru }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+        },
+      });
     }
 
-    // 2) SI ES GLOBAL → SOLO FUENTES GLOBALES
-    if (country === "Global") {
-      const globalSources = SOURCES.filter((s) => s.country === "Global");
-      return NextResponse.json({ sources: globalSources });
+    // === GLOBAL ===
+    if (country === "global" || country === "worldwide") {
+      const globalList = SOURCES.filter(
+        (s) => s.country.toLowerCase() === "global"
+      );
+
+      return new NextResponse(JSON.stringify({ sources: globalList }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+        },
+      });
     }
 
-    // 3) SI ES OTRO PAÍS → usar SOLO fuentes globales
-    const fallbackGlobal = SOURCES.filter((s) => s.country === "Global");
-    return NextResponse.json({ sources: fallbackGlobal });
+    // === OTRO país -> enviar solo globales (fallback) ===
+    const fallback = SOURCES.filter(
+      (s) => s.country.toLowerCase() === "global"
+    );
 
+    return new NextResponse(JSON.stringify({ sources: fallback }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+      },
+    });
   } catch (err: any) {
-    return NextResponse.json(
-      { error: err.message || "Unknown error" },
-      { status: 500 }
+    return new NextResponse(
+      JSON.stringify({
+        error: err?.message || "Error inesperado en geosources",
+      }),
+      {
+        status: 500,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+        },
+      }
     );
   }
 }

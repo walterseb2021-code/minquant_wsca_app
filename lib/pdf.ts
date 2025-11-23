@@ -185,8 +185,9 @@ const LIGHT = "#f3f4f6";
 const DARK = "#111827";
 
 const FALLBACK_COMMODITY_PRICE_USD: Record<string, number> = {
-  Oro: 70000000,
-  Plata: 800000,
+  // USD / tonelada de metal fino (aprox)
+  Oro: 70000000,    // ~70k USD/kg * 1000
+  Plata: 800000,    // ~800 USD/kg * 1000
   Cobre: 9000,
   Aluminio: 2300,
   Zinc: 2600,
@@ -196,7 +197,12 @@ const FALLBACK_COMMODITY_PRICE_USD: Record<string, number> = {
 };
 const COMMERCIAL_ORDER = ["Oro", "Plata", "Cobre", "Aluminio", "Zinc", "Plomo", "Estaño", "Níquel"];
 
-type CommodityPrices = { prices: Record<string, number>; currency: CurrencyCode; updatedAt?: string };
+type CommodityPrices = {
+  prices: Record<string, number>;
+  currency: CurrencyCode;
+  updatedAt?: string;
+  source?: string;
+};
 
 async function getCommodityPrices(): Promise<CommodityPrices> {
   try {
@@ -206,7 +212,9 @@ async function getCommodityPrices(): Promise<CommodityPrices> {
     const isJson = ct.toLowerCase().includes("application/json");
     if (!isJson) throw new Error(`non-json content-type: ${ct}`);
     const j = (await r.json()) as CommodityPrices;
-    if (!j || typeof j !== "object" || typeof j.prices !== "object") throw new Error("bad schema");
+    if (!j || typeof j !== "object" || typeof j.prices !== "object") {
+      throw new Error("bad schema");
+    }
     return j;
   } catch {
     return { prices: FALLBACK_COMMODITY_PRICE_USD, currency: "USD", updatedAt: undefined };
@@ -252,7 +260,7 @@ type BuildReportOptions = {
   embedStaticMap?: boolean;
   currency?: CurrencyCode;
   recoveryPayables?: CommodityAdjustments; // NUEVO
-  // Nuevo: nearbySources (opcional). Estructura libre esperada: array de objetos con { id, name, commodity?, latitude?, longitude?, distance_m?, source?, source_url?, raw? }
+  // nearbySources (opcional). Estructura libre esperada: array de objetos con { id, name, commodity?, latitude?, longitude?, distance_m?, source?, source_url?, raw? }
   nearbySources?: any[];
 };
 
@@ -430,11 +438,11 @@ export async function buildReportPdf(opts: BuildReportOptions) {
         const defByCom = DEFAULTS_BY_COMMODITY[r.mineral];
         const rec = Math.max(
           0,
-          Math.min(1, fromUI?.recovery ?? defByCom?.recovery ?? DEFAULT_REC),
+          Math.min(1, fromUI?.recovery ?? defByCom?.recovery ?? DEFAULT_REC)
         );
         const pay = Math.max(
           0,
-          Math.min(1, fromUI?.payable ?? defByCom?.payable ?? DEFAULT_PAY),
+          Math.min(1, fromUI?.payable ?? defByCom?.payable ?? DEFAULT_PAY)
         );
 
         const net = (r.gradePct / 100) * price * rec * pay; // Valor por tonelada de mineral
@@ -461,15 +469,19 @@ export async function buildReportPdf(opts: BuildReportOptions) {
       doc.setFont("helvetica", "normal");
       doc.setTextColor("#374151");
       doc.setFontSize(10);
+
+      const srcLabel = market.source
+        ? `Fuente precios: ${market.source}`
+        : "Fuente precios: /api/commodity-prices";
+
       const srcNote = market.updatedAt
-        ? `Fuente precios: /api/commodity-prices (actualizado: ${new Date(
-            market.updatedAt,
-          ).toLocaleString()})`
-        : "Precios referenciales internos (fallback).";
+        ? `${srcLabel} (actualizado: ${new Date(market.updatedAt).toLocaleString()})`
+        : `${srcLabel} (precios referenciales / fallback).`;
+
       doc.text(
         `${srcNote} — Valor = Precio × (Ley metal/100) × Recuperación × Payable (por commodity).`,
         marginX,
-        yE,
+        yE
       );
       yE += 8;
 
@@ -509,7 +521,7 @@ export async function buildReportPdf(opts: BuildReportOptions) {
       doc.text(
         `Total estimado (${market.currency}/t): ${fmtMoney(totalPerTonne, market.currency)}`,
         marginX,
-        yE,
+        yE
       );
       yE += 16;
 
@@ -551,7 +563,7 @@ export async function buildReportPdf(opts: BuildReportOptions) {
     doc.text(
       "Listado de features geoespaciales detectados alrededor de la ubicación (origen: OpenStreetMap / Geoapify u otros).",
       marginX,
-      yN,
+      yN
     );
     yN += 12;
 
@@ -559,14 +571,33 @@ export async function buildReportPdf(opts: BuildReportOptions) {
     const nearby = Array.isArray(nearbySources) ? nearbySources : [];
     const body = nearby.map((s: any) => {
       const name = s.name || s.address || "Sin nombre";
-      const type = s.raw?.tags ? Object.values(s.raw.tags).join(", ") : (s.type || "");
-      const comm = Array.isArray(s.commodity) ? s.commodity.slice(0, 3).join(", ") : (s.commodity || "");
-      const distKm = typeof s.distance_m === "number" ? round2(s.distance_m / 1000) : (s.distance_km ? round2(s.distance_km) : "");
+      const type = s.raw?.tags ? Object.values(s.raw.tags).join(", ") : s.type || "";
+      const comm = Array.isArray(s.commodity)
+        ? s.commodity.slice(0, 3).join(", ")
+        : s.commodity || "";
+      const distKm =
+        typeof s.distance_m === "number"
+          ? round2(s.distance_m / 1000)
+          : s.distance_km
+          ? round2(s.distance_km)
+          : "";
       const distStr = distKm === "" ? "" : `${distKm} km`;
-      const lat = typeof s.latitude === "number" ? s.latitude.toFixed(6) : (s.lat ? Number(s.lat).toFixed(6) : "");
-      const lon = typeof s.longitude === "number" ? s.longitude.toFixed(6) : (s.lon ? Number(s.lon).toFixed(6) : "");
-      const src = s.source || (s.raw && (s.raw.provider || s.raw.source)) || s.source_url || "";
-      const shortSrc = typeof src === "string" && src.length > 48 ? src.slice(0, 45) + "..." : src || "";
+      const lat =
+        typeof s.latitude === "number"
+          ? s.latitude.toFixed(6)
+          : s.lat
+          ? Number(s.lat).toFixed(6)
+          : "";
+      const lon =
+        typeof s.longitude === "number"
+          ? s.longitude.toFixed(6)
+          : s.lon
+          ? Number(s.lon).toFixed(6)
+          : "";
+      const src =
+        s.source || (s.raw && (s.raw.provider || s.raw.source)) || s.source_url || "";
+      const shortSrc =
+        typeof src === "string" && src.length > 48 ? src.slice(0, 45) + "..." : src || "";
 
       return [name, type, comm, distStr, lat, lon, shortSrc];
     });
@@ -594,14 +625,17 @@ export async function buildReportPdf(opts: BuildReportOptions) {
       },
       theme: "grid",
     });
-
   } catch (e) {
     // No bloquear el PDF por esta tabla; mostramos nota
     console.warn("Error generando tabla de yacimientos:", e);
     try {
       doc.setFont("helvetica", "normal");
       doc.setFontSize(10);
-      doc.text("Nota: No fue posible renderizar la tabla de yacimientos.", marginX, (doc as any).lastAutoTable?.finalY + 12 || 56);
+      doc.text(
+        "Nota: No fue posible renderizar la tabla de yacimientos.",
+        marginX,
+        ((doc as any).lastAutoTable?.finalY || 56) + 12
+      );
     } catch {}
   }
 
@@ -698,7 +732,7 @@ export async function buildMineralPdf(opts: BuildMineralPdfOptions): Promise<Uin
   doc.text(
     "Documento informativo. La confirmación mineralógica requiere prueba de laboratorio.",
     marginX,
-    yAfter,
+    yAfter
   );
 
   const arr = doc.output("arraybuffer");
