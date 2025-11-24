@@ -1,54 +1,88 @@
-// lib/pdf_plus.ts — Reporte general (mezcla, imágenes, interpretación y economía + mapa)
-// ✅ Versión corregida: unidades claras, precios realistas y sin colisiones de variables
-
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+// ==== Helpers para conclusiones dinámicas según minerales ====
 
-/** Tipos principales */
-export type CurrencyCode = "USD" | "PEN" | "EUR";
-
-export type MineralPct = { name: string; pct: number };
-
-export type ImageResult = {
-  filename?: string;
-  minerals: MineralPct[];
-  excluded?: { reason?: string } | null;
+type ConclusionesYRecs = {
+  conclusiones: string[];
+  recomendaciones: string[];
 };
 
-export type GlobalMix = MineralPct[];
+ function buildConclusionesYRecomendaciones(globalMix: GlobalMix): ConclusionesYRecs {
+ const mixOrdenado = [...globalMix].sort((a, b) => b.pct - a.pct);
+  const nombres = mixOrdenado.map((m) => m.name.toLowerCase());
 
-/** Códigos de commodities soportados */
-export type CommodityCode =
-  | "Au"
-  | "Ag"
-  | "Pt"
-  | "Pd"
-  | "Cu"
-  | "Pb"
-  | "Zn"
-  | "Al"
-  | "Sn"
-  | "Ni"
-  | "Mo"
-  | "Sb"
-  | "Co"
-  | "V"
-  | "Ti"
-  | "W"
-  | "Li"
-  | "Fe"
-  | "Mn"
-  | "REE";
+  const tieneOxidosCu = nombres.some((n) =>
+    ["malachite", "azurite", "chrysocolla", "cuprite"].includes(n)
+  );
+  const tieneOxidosFe = nombres.some((n) =>
+    ["limonite", "hematite", "goethite"].includes(n)
+  );
+  const tieneAuAg = nombres.some((n) => ["gold", "native gold", "silver"].includes(n));
+  const tieneSulfuros = nombres.some((n) =>
+    ["chalcopyrite", "bornite", "galena", "sphalerite", "pyrite"].includes(n)
+  );
 
-export type Commodity = {
-  code: CommodityCode;
-  display: string;
-  unit: "kg/t" | "g/t";      // Unidad de ley del mineral
-  priceUnit: string;         // Unidad de precio → USD/kg, USD/g, etc
-  payableDefault: number;
-  priceDefault: number;      // Precio base en USD según priceUnit
-  enabled?: boolean;
-};
+  const conclusiones: string[] = [];
+  const recomendaciones: string[] = [];
+
+  if (!mixOrdenado.length) {
+    conclusiones.push(
+      "No se identificó una mezcla mineral global consistente; el análisis no arrojó minerales dominantes."
+    );
+    recomendaciones.push(
+      "Repetir el muestreo con una muestra más representativa.",
+      "Complementar el reconocimiento por imagen con ensayos de laboratorio."
+    );
+    return { conclusiones, recomendaciones };
+  }
+
+  const top = mixOrdenado.slice(0, 3);
+  const resumenTop = top.map((m) => `${m.name} (${m.pct.toFixed(2)}%)`).join(", ");
+
+  conclusiones.push(
+    `La mezcla mineral global está dominada por: ${resumenTop}.`
+  );
+
+  if (tieneOxidosCu) {
+    conclusiones.push(
+      "Predominan minerales de oxidación de cobre (malaquita/azurita), lo que sugiere una zona de oxidación superficial asociada a mineralización cuprífera."
+    );
+  }
+
+  if (tieneOxidosFe) {
+    conclusiones.push(
+      "La presencia importante de limonita u otros óxidos de hierro indica procesos intensos de intemperismo y alteración supergénica."
+    );
+  }
+
+  if (!tieneAuAg && !tieneSulfuros && tieneOxidosCu) {
+    conclusiones.push(
+      "No se identifican sulfuros metálicos ni minerales de Au/Ag; el valor económico directo es incierto y requiere validación geoquímica."
+    );
+  }
+
+  if (tieneOxidosCu) {
+    recomendaciones.push(
+      "Realizar muestreo más profundo para evaluar posible presencia de sulfuros primarios (calcopirita, bornita, etc.).",
+      "Enviar muestras a laboratorio para análisis de Cu total (ICP-OES o AAS).",
+      "Si se obtienen leyes > 0.3% Cu, ampliar prospección en un radio de 100–300 m."
+    );
+  }
+
+  if (tieneOxidosFe && !tieneSulfuros) {
+    recomendaciones.push(
+      "Considerar la zona como de interés geológico preliminar si las leyes resultan bajas.",
+      "Usar esta información para cartografía de alteración y estudios exploratorios."
+    );
+  }
+
+  recomendaciones.push(
+    "Complementar estos resultados con datos geológicos regionales y mapas estructurales.",
+    "Confirmar siempre con ensayos químicos certificados antes de tomar decisiones técnicas o económicas."
+  );
+
+  return { conclusiones, recomendaciones };
+}
 
 /** Catálogo base — Valores reales normalizados */
 const BASE_COMMODITIES: Commodity[] = [
@@ -132,6 +166,255 @@ function sanitizeText(s: string): string {
     return s.replace(/\u2022/g, "-").trim();
   }
 }
+/** Normaliza nombres de minerales a ESPAÑOL y fusiona variantes español/inglés/sin acentos */
+function normalizeMineralName(name: string): string {
+  const raw = name || "";
+  const n = raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+
+  if (!n) return raw;
+
+  // ================= GENERALES / GANGA =================
+  if (/^(indeterminado|unknown|no identificado|desconocido)$/.test(n)) {
+    return "Indeterminado";
+  }
+
+  if (/(cuarzo|quartz)/.test(n)) {
+    return "Cuarzo";
+  }
+
+  if (/(calcita|calcite)/.test(n)) {
+    return "Calcita";
+  }
+
+  if (/(dolomita|dolomite)/.test(n)) {
+    return "Dolomita";
+  }
+
+  if (/(barita|barite)/.test(n)) {
+    return "Barita";
+  }
+
+  // ================= HIERRO (Fe) =================
+  if (/(hematita|hematite)/.test(n)) {
+    return "Hematita";
+  }
+
+  if (/(magnetita|magnetite)/.test(n)) {
+    return "Magnetita";
+  }
+
+  if (/(goethita|goethite)/.test(n)) {
+    return "Goethita";
+  }
+
+  if (/(limonita|limonite)/.test(n)) {
+    return "Limonita";
+  }
+
+  if (/(siderita|siderite)/.test(n)) {
+    return "Siderita";
+  }
+
+  if (/(oxidos? de hierro|iron oxides?)/.test(n)) {
+    return "Óxidos de hierro";
+  }
+
+  // ================= COBRE (Cu) =================
+  if (/(calcopirita|chalcopyrite)/.test(n)) {
+    return "Calcopirita";
+  }
+
+  if (/(bornita|bornite)/.test(n)) {
+    return "Bornita";
+  }
+
+  if (/(calcosina|chalcocite)/.test(n)) {
+    return "Calcosina";
+  }
+
+  if (/(covelina|covellite)/.test(n)) {
+    return "Covelina";
+  }
+
+  if (/(enargita|enargite)/.test(n)) {
+    return "Enargita";
+  }
+
+  if (/(malaquita|malachite)/.test(n)) {
+    return "Malaquita";
+  }
+
+  if (/(azurita|azurite)/.test(n)) {
+    return "Azurita";
+  }
+
+  if (/(crisocola|chrysocolla)/.test(n)) {
+    return "Crisocola";
+  }
+
+  if (/(cuprita|cuprite)/.test(n)) {
+    return "Cuprita";
+  }
+
+  if (/(tenorita|tenorite)/.test(n)) {
+    return "Tenorita";
+  }
+
+  // ================= ORO (Au) =================
+  if (/(oro nativo|oro|gold)/.test(n)) {
+    return "Oro nativo";
+  }
+
+  if (/(electrum|electro)/.test(n)) {
+    return "Electrum";
+  }
+
+  if (/(calaverita|calaverite)/.test(n)) {
+    return "Calaverita";
+  }
+
+  // ================= PLATA (Ag) =================
+  if (/(plata nativa|plata|silver)/.test(n)) {
+    return "Plata nativa";
+  }
+
+  if (/(acantita|acanthite)/.test(n)) {
+    return "Acantita";
+  }
+
+  if (/(argentita|argentite)/.test(n)) {
+    return "Argentita";
+  }
+
+  if (/(pirargirita|pyrargyrite)/.test(n)) {
+    return "Pirargirita";
+  }
+
+  if (/(proustita|proustite)/.test(n)) {
+    return "Proustita";
+  }
+
+  // ================= PLOMO (Pb) =================
+  if (/(galena)/.test(n)) {
+    return "Galena";
+  }
+
+  if (/(cerusita|cerussite)/.test(n)) {
+    return "Cerusita";
+  }
+
+  if (/(anglesita|anglesite)/.test(n)) {
+    return "Anglesita";
+  }
+
+  // ================= ZINC (Zn) =================
+  if (/(esfalerita|sphalerite|blenda)/.test(n)) {
+    return "Esfalerita";
+  }
+
+  if (/(smithsonita|smithsonite)/.test(n)) {
+    return "Smithsonita";
+  }
+
+  if (/(hemimorfita|hemimorphite)/.test(n)) {
+    return "Hemimorfita";
+  }
+
+  // ================= NÍQUEL (Ni) =================
+  if (/(pentlandita|pentlandite)/.test(n)) {
+    return "Pentlandita";
+  }
+
+  if (/(millerita|millerite)/.test(n)) {
+    return "Millerita";
+  }
+
+  if (/(garnierita|garnierite)/.test(n)) {
+    return "Garnierita";
+  }
+
+  // ================= ESTAÑO (Sn) =================
+  if (/(casiterita|cassiterite)/.test(n)) {
+    return "Casiterita";
+  }
+
+  // ================= TUNGSTENO (W) =================
+  if (/(scheelita|scheelite)/.test(n)) {
+    return "Scheelita";
+  }
+
+  if (/(wolframita|wolframite)/.test(n)) {
+    return "Wolframita";
+  }
+
+  // ================= MOLIBDENO (Mo) =================
+  if (/(molibdenita|molybdenite)/.test(n)) {
+    return "Molibdenita";
+  }
+
+  // ================= COBALTO (Co) =================
+  if (/(cobaltita|cobaltite)/.test(n)) {
+    return "Cobaltita";
+  }
+
+  // ================= ANTIMONIO (Sb) =================
+  if (/(antimonita|stibnite)/.test(n)) {
+    return "Antimonita";
+  }
+
+  // ================= MANGANESO (Mn) =================
+  if (/(pirolusita|pyrolusite)/.test(n)) {
+    return "Pirolusita";
+  }
+
+  if (/(rodocrosita|rhodochrosite)/.test(n)) {
+    return "Rodocrosita";
+  }
+
+  // ================= LITIO (Li) =================
+  if (/(espodumena|spodumene)/.test(n)) {
+    return "Espodumena";
+  }
+
+  if (/(lepidolita|lepidolite)/.test(n)) {
+    return "Lepidolita";
+  }
+
+  // ================= Tierras raras (REE) =================
+  if (/(monacita|monazite)/.test(n)) {
+    return "Monacita";
+  }
+
+  if (/(bastnasita|bastnaesite)/.test(n)) {
+    return "Bastnasita";
+  }
+
+  // Si no entra en ningún caso, devolvemos el nombre original
+  return raw;
+}
+
+/** Fusiona entradas de la mezcla global que representen lo mismo (por idioma u etiqueta) */
+function mergeGlobalMix(mix: GlobalMix): GlobalMix {
+  const acc = new Map<string, MineralPct>();
+
+  for (const m of mix || []) {
+    const label = normalizeMineralName(m.name);
+    const key = label.toLowerCase(); // clave de agrupación
+
+    const prev = acc.get(key);
+    if (prev) {
+      prev.pct += m.pct;
+    } else {
+      acc.set(key, { name: label, pct: m.pct });
+    }
+  }
+
+  return Array.from(acc.values());
+}
 
 /** Mapa estático */
 async function fetchStaticMap(
@@ -157,16 +440,17 @@ async function fetchStaticMap(
   }
 }
 
-/** Heurísticas metalíferas */
+/** Heurísticas metalíferas (ES + EN) */
 const RX = {
-  cu: /(malaquita|azurita|crisocola|cuprita|tenorita|bornita|chalcopyrite)/i,
-  fe: /(pirita|hematita|goethita|magnetita|limonita|marcasita)/i,
-  au: /(oro nativo|oro|gold|arsenopirita)/i,
-  ag: /(plata nativa|plata|silver|argentita|acantita)/i,
+  cu: /(malaquita|malachite|azurita|azurite|crisocola|chrysocolla|cuprita|cuprite|tenorita|tenorite|bornita|bornite|chalcopyrita|chalcopyrite)/i,
+  fe: /(pirita|pyrite|hematita|hematite|goethita|goethite|magnetita|magnetite|limonita|limonite|marcasita|marcasite)/i,
+  au: /(oro nativo|oro|gold|arsenopirita|arsenopyrite)/i,
+  ag: /(plata nativa|plata|silver|argentita|argentite|acantita|acanthite)/i,
   zn: /(esfalerita|sphalerite|blenda)/i,
   pb: /(galena)/i,
-  gangas: /(calcita|dolomita|barita|cuarzo|quartz)/i,
+  gangas: /(calcita|calcite|dolomita|dolomite|barita|barite|cuarzo|quartz)/i,
 };
+
 
 /** Mapea mineral detectado a commodity */
 function mineralToMetals(name: string): CommodityCode[] {
@@ -427,8 +711,13 @@ export async function buildReportPdfPlus(args: {
   byImage: ImageResult[];
   opts?: BuildReportOptions;
 }): Promise<jsPDF> {
-  const { mixGlobal, byImage, opts } = args;
-  const doc = new jsPDF({ unit: "pt", format: "a4" });
+ const { mixGlobal: rawMixGlobal, byImage, opts } = args;
+
+// 🔹 Normalizamos mezcla global (para evitar "Óxidos de hierro" / "Iron Oxides" duplicados)
+const mixGlobal = mergeGlobalMix(rawMixGlobal || []);
+
+const doc = new jsPDF({ unit: "pt", format: "a4" });
+
 
   const margin = 42;
   const pageW = doc.internal.pageSize.getWidth();
@@ -512,37 +801,45 @@ export async function buildReportPdfPlus(args: {
     y += 6;
   }
 
-  // Mezcla Global
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(12);
-  doc.text("Mezcla Global (normalizada a 100 %)", margin, y);
-  y += 10;
+ // Mezcla Global
+doc.setFont("helvetica", "bold");
+doc.setFontSize(12);
+doc.text("Mezcla Global (normalizada a 100 %)", margin, y);
+y += 10;
 
-  autoTable(doc, {
-    startY: y + 6,
-    head: [["Mineral", "%"]],
-    body: mixGlobal.map((m) => [m.name, toPct(m.pct)]),
-    styles: { fontSize: 9, cellPadding: 4, textColor: cellText },
-    headStyles: { fillColor: headFill, textColor: headText },
-    margin: { left: margin, right: margin },
-    theme: "grid",
-  });
+autoTable(doc, {
+  startY: y + 6,
+  head: [["Mineral", "%"]],
+  body: mixGlobal.map((m) => [
+    normalizeMineralName(m.name),  // 👈 ya normalizado
+    toPct(m.pct),
+  ]),
+  styles: { fontSize: 9, cellPadding: 4, textColor: cellText },
+  headStyles: { fillColor: headFill, textColor: headText },
+  margin: { left: margin, right: margin },
+  theme: "grid",
+});
+
   y = (doc as any).lastAutoTable.finalY + 14;
 
   // Interpretación
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(12);
-  doc.text("Interpretación preliminar (automática)", margin, y);
-  y += 10;
+ doc.setFont("helvetica", "bold");
+doc.setFontSize(12);
+doc.text("Interpretación preliminar (automática)", margin, y);
+y += 22;   // 🔹 más aire bajo el título
 
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  const interLines = doc.splitTextToSize(
-    sanitizeText(interpretMix(mixGlobal)),
-    pageW - margin * 2
-  );
-  doc.text(interLines, margin, y);
-  y += 14 * interLines.length + 12;
+doc.setFont("helvetica", "normal");
+doc.setFontSize(10);
+
+const interLines = doc.splitTextToSize(
+  sanitizeText(interpretMix(mixGlobal)),
+  pageW - margin * 2
+);
+doc.text(interLines, margin, y);
+
+// 🔹 más espacio después del bloque
+y += 14 * interLines.length + 20;
+
 
   // Resultados por imagen
   doc.setFont("helvetica", "bold");
@@ -554,204 +851,209 @@ export async function buildReportPdfPlus(args: {
     startY: y + 6,
     head: [["Imagen", "Top minerales (%)", "Exclusiones"]],
 
-    body: byImage.map((img, idx) => [
+        body: byImage.map((img, idx) => {
+    const topMinerals = img.minerals
+      .slice(0, 3)
+      .map((m) => {
+        const label = normalizeMineralName(m.name);
+        return `${label} (${m.pct.toFixed(2)}%)`;
+      })
+      .join(", ");
+
+    return [
       img.filename || `Imagen ${idx + 1}`,
-      img.minerals
-        .slice(0, 3)
-        .map((m) => `${m.name} (${m.pct.toFixed(2)}%)`)
-        .join(", "),
+      topMinerals,
       img.excluded?.reason || "",
-    ]),
-    styles: { fontSize: 9, cellPadding: 4, textColor: cellText },
-    headStyles: { fillColor: headFill, textColor: headText },
-    margin: { left: margin, right: margin },
-    theme: "grid",
-  });
-  y = (doc as any).lastAutoTable.finalY + 14;
-
-  // Estimación económica
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(12);
-  doc.text("Estimación económica (referencial)", margin, y);
-  y += 10;
-
-  // Nota clara sobre unidades y tipo de cambio
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  doc.text(
-    "Todos los precios base están en USD; se convierten a la moneda seleccionada según el tipo de cambio configurado en la app.",
-    margin,
-    y
-  );
-  y += 14;
-
-  const econ = buildEconomics(mixGlobal, opts?.econ);
-
-  autoTable(doc, {
-    startY: y + 6,
-    head: [
-      [
-        "Commodity",
-        "Tenor",
-        "Unidad",
-        "Payable",
-        "Cant. Pagable",
-        "Precio",
-        "Valor",
-        "Moneda",
-      ],
-    ],
-    body: econ.rows.map((r) => [
-      r.display,                               // nombre completo del commodity
-      r.tenor.toFixed(2),                     // ley estimada
-      r.unit,                                 // kg/t o g/t
-      `${(r.payable * 100).toFixed(0)} %`,    // payable en %
-      r.payQty.toFixed(2),                    // cantidad pagable
-      `${r.price.toFixed(2)} ${r.priceUnit}`, // precio + unidad (ej. USD/kg, USD/g)
-      r.value.toFixed(2),                     // valor por tonelada de mineral
-      `${r.currency}`,                        // moneda (USD, PEN, EUR)
-    ]),
-    styles: { fontSize: 9, cellPadding: 4, textColor: cellText },
-    headStyles: { fillColor: headFill, textColor: headText },
-    margin: { left: margin, right: margin },
-    theme: "grid",
-  });
-  y = (doc as any).lastAutoTable.finalY + 14;
-
-  // Recomendaciones
-  try {
-    const recLines = [
-      "Recomendaciones:",
-      "- Si la estimación económica es Alta: avanzar a muestreo representativo, QA/QC y pruebas metalúrgicas.",
-      "- Si es Media: continuar exploración dirigida y validar recuperación metalúrgica.",
-      "- Si es Baja: priorizar prospección adicional y revisar costos.",
-      "Nota: Estas son recomendaciones preliminares basadas en observación; confirmar con ensayos de laboratorio.",
     ];
+  }),
+
+
+    styles: { fontSize: 9, cellPadding: 4, textColor: cellText },
+    headStyles: { fillColor: headFill, textColor: headText },
+    margin: { left: margin, right: margin },
+    theme: "grid",
+  });
+  y = (doc as any).lastAutoTable.finalY + 14;
+
+ // Estimación económica
+doc.setFont("helvetica", "bold");
+doc.setFontSize(12);
+doc.text("Estimación económica (referencial)", margin, y);
+y += 22; // 🔹 más espacio bajo el título
+
+// Nota clara sobre unidades y tipo de cambio
+doc.setFont("helvetica", "normal");
+doc.setFontSize(9);
+
+const econNote = doc.splitTextToSize(
+  "Todos los precios base están en USD; se convierten a la moneda seleccionada según el tipo de cambio configurado en la app.",
+  pageW - margin * 2
+);
+
+doc.text(econNote, margin, y);
+
+// 🔹 Más espacio después de la nota
+y += econNote.length * 14 + 14;
+
+// Generar tabla económica
+const econ = buildEconomics(mixGlobal, opts?.econ);
+
+autoTable(doc, {
+  startY: y + 6,  // 🔹 pequeño margen antes de la tabla
+  head: [
+    [
+      "Commodity",
+      "Tenor",
+      "Unidad",
+      "Payable",
+      "Cant. Pagable",
+      "Precio",
+      "Valor",
+      "Moneda",
+    ],
+  ],
+  body: econ.rows.map((r) => [
+    r.display,
+    r.tenor.toFixed(2),
+    r.unit,
+    `${(r.payable * 100).toFixed(0)} %`,
+    r.payQty.toFixed(2),
+    `${r.price.toFixed(2)} ${r.priceUnit}`,
+    r.value.toFixed(2),
+    `${r.currency}`,
+  ]),
+  styles: { fontSize: 9, cellPadding: 4, textColor: cellText },
+  headStyles: { fillColor: headFill, textColor: headText },
+  margin: { left: margin, right: margin },
+  theme: "grid",
+});
+
+// 🔹 Más aire debajo de la tabla
+y = (doc as any).lastAutoTable.finalY + 20;
+
+
+    // ================= YACIMIENTOS / CANTERAS CERCANAS =================
+  {
+    const sources: any[] = Array.isArray(opts?.nearbySources)
+      ? (opts!.nearbySources as any[])
+      : [];
+
+    if (y + 80 > pageH - margin) {
+      doc.addPage();
+      y = margin;
+    }
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11);
+    doc.text("Yacimientos / canteras cercanas (detectados)", margin, y);
+    y += 14;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+
+    let body: any[][] = [];
+
+    if (sources.length > 0) {
+      body = sources.map((src: any, idx: number) => [
+        String(idx + 1),
+        sanitizeText(src.name || src.title || "Fuente"),
+        sanitizeText(src.mineral || src.commodity || "-"),
+        src.distance_km != null ? `${round2(src.distance_km)} km` : "-",
+        sanitizeText(src.provider || src.source || ""),
+      ]);
+    } else {
+      // 👉 Mensaje cuando no hay yacimientos cercanos disponibles
+      body = [
+        [
+          "-",
+          "No se registran yacimientos cercanos para las coordenadas analizadas.",
+          "-",
+          "-",
+          "",
+        ],
+      ];
+    }
+
+    autoTable(doc, {
+      startY: y + 4,
+      head: [["#", "Yacimiento / ocurrencia", "Mineral", "Distancia", "Fuente"]],
+      body,
+      styles: { fontSize: 9, cellPadding: 3, textColor: cellText },
+      headStyles: { fillColor: headFill, textColor: headText },
+      margin: { left: margin, right: margin },
+      theme: "grid",
+    });
+
+    y = (doc as any).lastAutoTable.finalY + 18;
+  }
+
+  // ================= CONCLUSIONES Y RECOMENDACIONES =================
+  try {
+    const { conclusiones, recomendaciones } =
+      buildConclusionesYRecomendaciones(mixGlobal);
+
+    // Forzar nueva página
+    doc.addPage();
+    y = margin;
+
+    // --- TÍTULO GENERAL ---
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
     doc.text("Conclusiones y recomendaciones", margin, y);
-    y += 12;
+    y += 24;
+
+    // --- CONCLUSIONES ---
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("Conclusiones:", margin, y);
+    y += 18;
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
-    const recText = doc.splitTextToSize(
-      sanitizeText(recLines.join("\n")),
+
+    const concText = doc.splitTextToSize(
+      sanitizeText(conclusiones.map((c) => `• ${c}`).join("\n")),
       pageW - margin * 2
     );
+
+    doc.text(concText, margin, y);
+    y += concText.length * 14 + 22;
+
+    // --- RECOMENDACIONES ---
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("Recomendaciones:", margin, y);
+    y += 18;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+
+    const recText = doc.splitTextToSize(
+      sanitizeText(recomendaciones.map((r) => `• ${r}`).join("\n")),
+      pageW - margin * 2
+    );
+
     doc.text(recText, margin, y);
-    y += 14 * recText.length + 10;
-  } catch {
-    y += 8;
+    y += recText.length * 14 + 30;
+  } catch (e) {
+    console.error("Error en conclusiones/recomendaciones PDF:", e);
+    y += 20;
   }
 
-  // Yacimientos / canteras cercanas
-  if (Array.isArray(opts?.nearbySources)) {
-    try {
-      if (y + 80 > pageH - margin) {
-        doc.addPage();
-        y = margin;
-      }
+  // ================= PIE DE PÁGINA =================
+  const footerText = sanitizeText(
+    "Nota: Los valores mostrados son referenciales y basados en reconocimiento mineral asistido por IA y precios de mercado aproximados. " +
+      "Requieren validación con ensayos químicos certificados. © MinQuant_WSCA"
+  );
 
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(12);
-      doc.text("Yacimientos / Canteras cercanas (detectados)", margin, y);
-      y += 14;
-
-      const nearbyBody = (opts!.nearbySources || []).map((s: any) => {
-        const name = s.name || "Sin nombre";
-        const comm = Array.isArray(s.commodity)
-          ? s.commodity.slice(0, 3).join(", ")
-          : s.commodity || "";
-
-        const distKm =
-          typeof s.distance_m === "number"
-            ? s.distance_m / 1000
-            : s.distance_km ?? null;
-
-        const distStr = distKm == null ? "" : `${round2(distKm)} km`;
-
-        const lat =
-          typeof s.latitude === "number"
-            ? s.latitude.toFixed(6)
-            : s.lat
-            ? Number(s.lat).toFixed(6)
-            : "";
-
-        const lon =
-          typeof s.longitude === "number"
-            ? s.longitude.toFixed(6)
-            : s.lon
-            ? Number(s.lon).toFixed(6)
-            : "";
-
-        const source = s.source || (s.raw && s.raw.provider) || "";
-        const url = s.source_url || (s.raw && s.raw.url) || "";
-        const shortUrl =
-          typeof url === "string" && url.length > 45
-            ? url.slice(0, 42) + "..."
-            : url || "";
-
-        return [
-          sanitizeText(name),
-          sanitizeText(comm),
-          distStr,
-          lat,
-          lon,
-          source ? source : shortUrl,
-        ];
-      });
-
-      const bodyToRender =
-        nearbyBody.length > 0 ? nearbyBody : [["-", "-", "-", "-", "-", "-"]];
-
-      autoTable(doc, {
-        startY: y + 6,
-        head: [["Nombre", "Commodities", "Dist", "Lat", "Lon", "Fuente / URL"]],
-        body: bodyToRender,
-        styles: {
-          fontSize: 8.5,
-          cellPadding: 3,
-          textColor: cellText,
-          overflow: "ellipsize" as any,
-        },
-        headStyles: { fillColor: headFill, textColor: headText },
-        margin: { left: margin, right: margin },
-        theme: "grid",
-        columnStyles: {
-          0: { cellWidth: 120 },
-          1: { cellWidth: 90 },
-          2: { cellWidth: 48 },
-          3: { cellWidth: 64 },
-          4: { cellWidth: 64 },
-          5: { cellWidth: 120 },
-        },
-      });
-
-      y = (doc as any).lastAutoTable.finalY + 12;
-    } catch (e) {
-      console.warn("Error generando tabla de yacimientos:", e);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.text(
-        "Nota: No fue posible generar la tabla de yacimientos.",
-        margin,
-        y
-      );
-      y += 14;
-    }
-  }
-
-  // Pie
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
-  const footerY = doc.internal.pageSize.getHeight() - 26;
-  doc.text(
-    "Nota: Los valores mostrados son referenciales y basados en reconocimiento mineral asistido por IA y precios de mercado aproximados. Requieren validación con ensayos químicos certificados. © MinQuant_WSCA",
 
-    margin,
-    footerY
-  );
+  const footerWidth = pageW - margin * 2;
+  const footerLines = doc.splitTextToSize(footerText, footerWidth);
+
+  const footerY = pageH - margin - footerLines.length * 10;
+  doc.text(footerLines, margin, footerY);
 
   return doc;
 }

@@ -45,7 +45,240 @@ const cleanName = (raw: string) =>
     .replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9 \-()/]/g, "")
     .replace(/\s+/g, " ")
     .replace(/^./, c => c.toUpperCase());
+
+/** Normaliza nombres de minerales a ESPAÑOL y fusiona variantes español/inglés/sin acentos */
+function normalizeMineralName(name: string): string {
+  const raw = name || "";
+  const n = raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+
+  if (!n) return raw;
+
+  // ================= GENERALES / GANGA =================
+  if (/^(indeterminado|unknown|no identificado|desconocido)$/.test(n)) {
+    return "Indeterminado";
+  }
+
+  if (/(cuarzo|quartz)/.test(n)) {
+    return "Cuarzo";
+  }
+
+  if (/(calcita|calcite)/.test(n)) {
+    return "Calcita";
+  }
+
+  if (/(dolomita|dolomite)/.test(n)) {
+    return "Dolomita";
+  }
+
+  if (/(barita|barite)/.test(n)) {
+    return "Barita";
+  }
+
+  // ================= HIERRO (Fe) =================
+  if (/(hematita|hematite)/.test(n)) {
+    return "Hematita";
+  }
+
+  if (/(magnetita|magnetite)/.test(n)) {
+    return "Magnetita";
+  }
+
+  if (/(goethita|goethite)/.test(n)) {
+    return "Goethita";
+  }
+
+  if (/(limonita|limonite)/.test(n)) {
+    return "Limonita";
+  }
+
+  if (/(siderita|siderite)/.test(n)) {
+    return "Siderita";
+  }
+
+  if (/(oxidos? de hierro|iron oxides?)/.test(n)) {
+    return "Óxidos de hierro";
+  }
+
+  // ================= COBRE (Cu) =================
+  if (/(calcopirita|chalcopyrite)/.test(n)) {
+    return "Calcopirita";
+  }
+
+  if (/(bornita|bornite)/.test(n)) {
+    return "Bornita";
+  }
+
+  if (/(calcosina|chalcocite)/.test(n)) {
+    return "Calcosina";
+  }
+
+  if (/(covelina|covellite)/.test(n)) {
+    return "Covelina";
+  }
+
+  if (/(enargita|enargite)/.test(n)) {
+    return "Enargita";
+  }
+
+  if (/(malaquita|malachite)/.test(n)) {
+    return "Malaquita";
+  }
+
+  if (/(azurita|azurite)/.test(n)) {
+    return "Azurita";
+  }
+
+  if (/(crisocola|chrysocolla)/.test(n)) {
+    return "Crisocola";
+  }
+
+  if (/(cuprita|cuprite)/.test(n)) {
+    return "Cuprita";
+  }
+
+  if (/(tenorita|tenorite)/.test(n)) {
+    return "Tenorita";
+  }
+
+  // ================= ORO (Au) =================
+  if (/(oro nativo|oro|gold)/.test(n)) {
+    return "Oro nativo";
+  }
+
+  if (/(electrum|electro)/.test(n)) {
+    return "Electrum";
+  }
+
+  if (/(calaverita|calaverite)/.test(n)) {
+    return "Calaverita";
+  }
+
+  // ================= PLATA (Ag) =================
+  if (/(plata nativa|plata|silver)/.test(n)) {
+    return "Plata nativa";
+  }
+
+  if (/(acantita|acanthite)/.test(n)) {
+    return "Acantita";
+  }
+
+  if (/(argentita|argentite)/.test(n)) {
+    return "Argentita";
+  }
+
+  if (/(pirargirita|pyrargyrite)/.test(n)) {
+    return "Pirargirita";
+  }
+
+  if (/(proustita|proustite)/.test(n)) {
+    return "Proustita";
+  }
+
+  // ================= PLOMO (Pb) =================
+  if (/(galena)/.test(n)) {
+    return "Galena";
+  }
+
+  if (/(cerusita|cerussite)/.test(n)) {
+    return "Cerusita";
+  }
+
+  if (/(anglesita|anglesite)/.test(n)) {
+    return "Anglesita";
+  }
+
+  // ================= ZINC (Zn) =================
+  if (/(esfalerita|sphalerite|blenda)/.test(n)) {
+    return "Esfalerita";
+  }
+
+  if (/(smithsonita|smithsonite)/.test(n)) {
+    return "Smithsonita";
+  }
+
+  if (/(hemimorfita|hemimorphite)/.test(n)) {
+    return "Hemimorfita";
+  }
+
+  // ================= NÍQUEL (Ni) =================
+  if (/(pentlandita|pentlandite)/.test(n)) {
+    return "Pentlandita";
+  }
+
+  if (/(millerita|millerite)/.test(n)) {
+    return "Millerita";
+  }
+
+  if (/(garnierita|garnierite)/.test(n)) {
+    return "Garnierita";
+  }
+
+  // ================= ESTAÑO (Sn) =================
+  if (/(casiterita|cassiterite)/.test(n)) {
+    return "Casiterita";
+  }
+
+  // ================= TUNGSTENO (W) =================
+  if (/(scheelita|scheelite)/.test(n)) {
+    return "Scheelita";
+  }
+
+  if (/(wolframita|wolframite)/.test(n)) {
+    return "Wolframita";
+  }
+
+  // ================= MOLIBDENO (Mo) =================
+  if (/(molibdenita|molybdenite)/.test(n)) {
+    return "Molibdenita";
+  }
+
+  // ================= COBALTO (Co) =================
+  if (/(cobaltita|cobaltite)/.test(n)) {
+    return "Cobaltita";
+  }
+
+  // ================= ANTIMONIO (Sb) =================
+  if (/(antimonita|stibnite)/.test(n)) {
+    return "Antimonita";
+  }
+
+  // ================= MANGANESO (Mn) =================
+  if (/(pirolusita|pyrolusite)/.test(n)) {
+    return "Pirolusita";
+  }
+
+  if (/(rodocrosita|rhodochrosite)/.test(n)) {
+    return "Rodocrosita";
+  }
+
+  // ================= LITIO (Li) =================
+  if (/(espodumena|spodumene)/.test(n)) {
+    return "Espodumena";
+  }
+
+  if (/(lepidolita|lepidolite)/.test(n)) {
+    return "Lepidolita";
+  }
+
+  // ================= Tierras raras (REE) =================
+  if (/(monacita|monazite)/.test(n)) {
+    return "Monacita";
+  }
+
+  if (/(bastnasita|bastnaesite)/.test(n)) {
+    return "Bastnasita";
+  }
+
+  // Si no entra en ningún caso, devolvemos el nombre original
+  return raw;
+}
+
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
 
 function withTimeout<T>(p: Promise<T>, ms: number, tag = "timeout"): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -97,14 +330,20 @@ function filterPerImageWithFallback(list: MineralResult[]): {
   kept: MineralResult[];
   droppedForLowConf: boolean;
 } {
-  let r = (list || [])
-    .map(it => ({
-      name: cleanName(it.name),
+ let r = (list || [])
+  .map(it => {
+    const cleaned = cleanName(it.name);
+    const normalized = normalizeMineralName(cleaned);
+
+    return {
+      name: normalized, // 👈 ya normalizado
       pct: Number(it.pct ?? 0),
       confidence: typeof it.confidence === "number" ? it.confidence : undefined,
       evidence: it.evidence,
-    }))
-    .filter(it => it.name && it.pct >= 0);
+    };
+  })
+  .filter(it => it.name && it.pct >= 0);
+
 
   r = mergeDuplicates(r);
 
@@ -144,17 +383,24 @@ function consensusAcrossImages(perImage: { results: MineralResult[] }[]): string
 
 function computeGlobal(perImage: { results: MineralResult[] }[]) {
   const m = new Map<string, { sumPct: number; sumConf: number; count: number; name: string }>();
+
   for (const img of perImage) {
     for (const r of img.results) {
-      const k = r.name.toLowerCase();
-      const prev = m.get(k) || { sumPct: 0, sumConf: 0, count: 0, name: r.name };
+
+      const normalized = normalizeMineralName(r.name);
+      const k = normalized.toLowerCase();
+
+      const prev = m.get(k) || { sumPct: 0, sumConf: 0, count: 0, name: normalized };
+
       prev.sumPct += r.pct;
       prev.sumConf += r.confidence ?? 0.5;
       prev.count += 1;
-      prev.name = r.name;
+      prev.name = normalized;
+
       m.set(k, prev);
     }
   }
+
   let out = [...m.values()].map(v => ({
     name: v.name,
     pct: +(v.sumPct / v.count).toFixed(2),
@@ -357,10 +603,23 @@ export async function POST(req: Request) {
     const global = computeGlobal(perImage);
 
     // --------- Interpretación breve (geología/economía/advertencias)
-    const names = global.map(g => g.name.toLowerCase());
-    const hasCuSec = names.some(n => /(malaquita|azurita|crisocola|cuprita|bornita|calcopirita)/i.test(n));
-    const hasFeOx = names.some(n => /(limonita|goethita|hematita)/i.test(n));
-    const hasAuAg = names.some(n => /(pirita|arsenopirita|galena|esfalerita|tetraedrita|electrum|oro|plata)/i.test(n));
+    const names = global.map(g => normalizeMineralName(g.name).toLowerCase());
+    const hasCuSec = names.some((n) =>
+  /(malaquita|malachite|azurita|azurite|crisocola|chrysocolla|cuprita|cuprite|bornita|bornite|calcopirita|chalcopyrite)/i.test(
+    n
+  )
+);
+
+    const hasFeOx = names.some((n) =>
+  /(limonita|limonite|goethita|goethite|hematita|hematite)/i.test(n)
+);
+const hasAuAg = names.some((n) =>
+  /(pirita|pyrite|arsenopirita|arsenopyrite|galena|esfalerita|sphalerite|tetraedrita|electrum|oro|gold|plata|silver)/i.test(
+    n
+  )
+);
+
+    
 
     const interpretation = {
       geology:

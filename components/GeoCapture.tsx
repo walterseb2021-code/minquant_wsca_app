@@ -113,7 +113,7 @@ export default function GeoCapture({ onChange, googleKey }: Props) {
         type="button"
         onClick={capture}
         disabled={loading}
-        className="px-4 py-2 rounded-2xl shadow border text-sm disabled:opacity-60"
+        className="mt-6 px-4 py-2 rounded-2xl shadow border text-sm disabled:opacity-60"
       >
         {loading ? "Obteniendo ubicación..." : "Obtener ubicación"}
       </button>
