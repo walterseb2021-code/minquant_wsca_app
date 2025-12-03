@@ -1,11 +1,9 @@
 // mineral-app/components/MultiAnalyzer.tsx
 // -------------------------------------------------------------
 // MultiAnalyzer (completo)
-// - Corrige el error "Unexpected eof" (todas las etiquetas/JSX cierran).
 // - Genera PDF individual (ficha) y PDF general (tabla) usando lib/pdf.ts.
 // - Validación básica de datos (precio >= 0, ley 0..100).
 // - Edición de filas para el reporte general: agregar, modificar, eliminar.
-// - Sin dependencias adicionales (solo React + lib/pdf).
 // -------------------------------------------------------------
 
 "use client";
@@ -73,7 +71,8 @@ export default function MultiAnalyzer() {
         price: priceNum!,
         samplePct: pctNum!,
         currency,
-        notes: "Observaciones de ejemplo. Sustituye por tus notas reales.",
+        notes:
+          "Observaciones de ejemplo. Sustituye por tus notas reales.",
       });
       downloadPdf(bytes, `Ficha_${mineralName}.pdf`);
     } finally {
@@ -91,7 +90,10 @@ export default function MultiAnalyzer() {
   }
 
   function addRow() {
-    setRows((prev) => [...prev, { name: "", gradePct: null, pricePerUnit: null }]);
+    setRows((prev) => [
+      ...prev,
+      { name: "", gradePct: null, pricePerUnit: null },
+    ]);
   }
 
   function removeRow(index: number) {
@@ -105,12 +107,17 @@ export default function MultiAnalyzer() {
   // --------- Validación general (reporte general) ----------
   const rowsValid = useMemo(() => {
     if (!rows.length) return false;
-    // Requiere al menos una fila con nombre y números válidos (pueden ser null, se calculan como "-")
+    // Requiere que cada fila tenga nombre y %/precio en rango o null
     return rows.every((r) => {
       const nameOk = typeof r.name === "string";
       const gradeOk =
-        r.gradePct == null || (typeof r.gradePct === "number" && r.gradePct >= 0 && r.gradePct <= 100);
-      const priceOk = r.pricePerUnit == null || (typeof r.pricePerUnit === "number" && r.pricePerUnit >= 0);
+        r.gradePct == null ||
+        (typeof r.gradePct === "number" &&
+          r.gradePct >= 0 &&
+          r.gradePct <= 100);
+      const priceOk =
+        r.pricePerUnit == null ||
+        (typeof r.pricePerUnit === "number" && r.pricePerUnit >= 0);
       return nameOk && gradeOk && priceOk;
     });
   }, [rows]);
@@ -118,7 +125,9 @@ export default function MultiAnalyzer() {
   // --------- Exportar reporte general ----------
   async function handleExportGeneral() {
     if (!rowsValid) {
-      alert("Revisa los datos del reporte general (nombres y límites de %/precio).");
+      alert(
+        "Revisa los datos del reporte general (nombres y límites de %/precio)."
+      );
       return;
     }
     try {
@@ -139,8 +148,11 @@ export default function MultiAnalyzer() {
     const gradeStr = r.gradePct != null ? String(r.gradePct) : "";
     const priceStr = r.pricePerUnit != null ? String(r.pricePerUnit) : "";
 
-    const gradeInvalid = r.gradePct != null && !(r.gradePct >= 0 && r.gradePct <= 100);
-    const priceInvalid = r.pricePerUnit != null && !(r.pricePerUnit >= 0);
+    const gradeInvalid =
+      r.gradePct != null &&
+      !(r.gradePct >= 0 && r.gradePct <= 100);
+    const priceInvalid =
+      r.pricePerUnit != null && !(r.pricePerUnit >= 0);
 
     return (
       <tr key={i} className="border-b">
@@ -164,13 +176,19 @@ export default function MultiAnalyzer() {
               const v = e.target.value;
               if (v === "") return updateRow(i, { gradePct: null });
               const num = parseNumberOrNull(v);
-              updateRow(i, { gradePct: num == null ? null : clamp(num, 0, 100) });
+              updateRow(i, {
+                gradePct: num == null ? null : clamp(num, 0, 100),
+              });
             }}
-            className={`border rounded px-2 py-1 w-full text-right ${gradeInvalid ? "border-red-500" : ""}`}
+            className={`border rounded px-2 py-1 w-full text-right ${
+              gradeInvalid ? "border-red-500" : ""
+            }`}
             placeholder="0.00"
           />
           {gradeInvalid && (
-            <div className="text-xs text-red-600 mt-1">Debe estar entre 0 y 100.</div>
+            <div className="text-xs text-red-600 mt-1">
+              Debe estar entre 0 y 100.
+            </div>
           )}
         </td>
         <td className="px-3 py-2 align-top">
@@ -181,15 +199,22 @@ export default function MultiAnalyzer() {
             value={priceStr}
             onChange={(e) => {
               const v = e.target.value;
-              if (v === "") return updateRow(i, { pricePerUnit: null });
+              if (v === "")
+                return updateRow(i, { pricePerUnit: null });
               const num = parseNumberOrNull(v);
-              updateRow(i, { pricePerUnit: num == null ? null : Math.max(0, num) });
+              updateRow(i, {
+                pricePerUnit: num == null ? null : Math.max(0, num),
+              });
             }}
-            className={`border rounded px-2 py-1 w-full text-right ${priceInvalid ? "border-red-500" : ""}`}
+            className={`border rounded px-2 py-1 w-full text-right ${
+              priceInvalid ? "border-red-500" : ""
+            }`}
             placeholder="0.00"
           />
           {priceInvalid && (
-            <div className="text-xs text-red-600 mt-1">Debe ser un número ≥ 0.</div>
+            <div className="text-xs text-red-600 mt-1">
+              Debe ser un número ≥ 0.
+            </div>
           )}
         </td>
         <td className="px-3 py-2 align-top">
@@ -208,18 +233,25 @@ export default function MultiAnalyzer() {
   // --------- UI ----------
   return (
     <div className="p-5 max-w-5xl mx-auto">
-      <h1 className="text-2xl font-semibold mb-2">MultiAnalyzer – PDFs</h1>
+      <h1 className="text-2xl font-semibold mb-2">
+        MultiAnalyzer – PDFs
+      </h1>
       <p className="text-sm text-gray-600">
-        Pantalla para probar el PDF individual (ficha) y el PDF general (lista).
+        Pantalla para probar el PDF individual (ficha) y el PDF general
+        (lista).
       </p>
 
       {/* BLOQUE: Ficha individual */}
       <section className="mt-6 p-4 border rounded-xl">
-        <h2 className="text-lg font-semibold mb-3">Ficha individual</h2>
+        <h2 className="text-lg font-semibold mb-3">
+          Ficha individual
+        </h2>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <label className="flex flex-col gap-1">
-            <span className="text-sm text-gray-600">Nombre del mineral</span>
+            <span className="text-sm text-gray-600">
+              Nombre del mineral
+            </span>
             <input
               type="text"
               value={mineralName}
@@ -233,7 +265,9 @@ export default function MultiAnalyzer() {
             <span className="text-sm text-gray-600">Moneda</span>
             <select
               value={currency}
-              onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
+              onChange={(e) =>
+                setCurrency(e.target.value as CurrencyCode)
+              }
               className="border rounded px-3 py-2"
             >
               <option value="USD">USD (US$)</option>
@@ -243,23 +277,33 @@ export default function MultiAnalyzer() {
           </label>
 
           <label className="flex flex-col gap-1">
-            <span className="text-sm text-gray-600">Precio por unidad</span>
+            <span className="text-sm text-gray-600">
+              Precio por unidad
+            </span>
             <input
               type="number"
               min={0}
               step="0.01"
               value={price}
               onChange={(e) => setPrice(e.target.value)}
-              className={`border rounded px-3 py-2 ${!priceValid && price !== "" ? "border-red-500" : ""}`}
+              className={`border rounded px-3 py-2 ${
+                !priceValid && price !== ""
+                  ? "border-red-500"
+                  : ""
+              }`}
               placeholder="0.00"
             />
             {!priceValid && price !== "" && (
-              <span className="text-xs text-red-600">Debe ser un número ≥ 0.</span>
+              <span className="text-xs text-red-600">
+                Debe ser un número ≥ 0.
+              </span>
             )}
           </label>
 
           <label className="flex flex-col gap-1">
-            <span className="text-sm text-gray-600">Ley de muestra (%)</span>
+            <span className="text-sm text-gray-600">
+              Ley de muestra (%)
+            </span>
             <input
               type="number"
               min={0}
@@ -267,11 +311,17 @@ export default function MultiAnalyzer() {
               step="0.01"
               value={samplePct}
               onChange={(e) => setSamplePct(e.target.value)}
-              className={`border rounded px-3 py-2 ${!pctValid && samplePct !== "" ? "border-red-500" : ""}`}
+              className={`border rounded px-3 py-2 ${
+                !pctValid && samplePct !== ""
+                  ? "border-red-500"
+                  : ""
+              }`}
               placeholder="0.00"
             />
             {!pctValid && samplePct !== "" && (
-              <span className="text-xs text-red-600">Debe estar entre 0 y 100.</span>
+              <span className="text-xs text-red-600">
+                Debe estar entre 0 y 100.
+              </span>
             )}
           </label>
         </div>
@@ -289,24 +339,38 @@ export default function MultiAnalyzer() {
 
       {/* BLOQUE: Reporte general */}
       <section className="mt-6 p-4 border rounded-xl">
-        <h2 className="text-lg font-semibold mb-3">Reporte general</h2>
+        <h2 className="text-lg font-semibold mb-3">
+          Reporte general
+        </h2>
 
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
               <tr className="bg-gray-100">
-                <th className="text-left px-3 py-2 w-[40%]">Mineral</th>
-                <th className="text-right px-3 py-2 w-[20%]">% Ley</th>
-                <th className="text-right px-3 py-2 w-[25%]">Precio</th>
-                <th className="text-right px-3 py-2 w-[15%]">Acciones</th>
+                <th className="text-left px-3 py-2 w-[40%]">
+                  Mineral
+                </th>
+                <th className="text-right px-3 py-2 w-[20%]">
+                  % Ley
+                </th>
+                <th className="text-right px-3 py-2 w-[25%]">
+                  Precio
+                </th>
+                <th className="text-right px-3 py-2 w-[15%]">
+                  Acciones
+                </th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r, i) => renderRow(r, i))}
               {rows.length === 0 && (
                 <tr>
-                  <td className="px-3 py-3 text-gray-500" colSpan={4}>
-                    No hay filas. Agrega al menos una para exportar.
+                  <td
+                    className="px-3 py-3 text-gray-500"
+                    colSpan={4}
+                  >
+                    No hay filas. Agrega al menos una para
+                    exportar.
                   </td>
                 </tr>
               )}
@@ -329,10 +393,14 @@ export default function MultiAnalyzer() {
           </button>
           <div className="flex-1" />
           <div className="flex items-center gap-2">
-            <label className="text-sm text-gray-600">Moneda</label>
+            <label className="text-sm text-gray-600">
+              Moneda
+            </label>
             <select
               value={currency}
-              onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
+              onChange={(e) =>
+                setCurrency(e.target.value as CurrencyCode)
+              }
               className="border rounded px-3 py-2"
             >
               <option value="USD">USD (US$)</option>

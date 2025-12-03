@@ -7,20 +7,11 @@ type ConclusionesYRecs = {
   recomendaciones: string[];
 };
 
- function buildConclusionesYRecomendaciones(globalMix: GlobalMix): ConclusionesYRecs {
- const mixOrdenado = [...globalMix].sort((a, b) => b.pct - a.pct);
-  const nombres = mixOrdenado.map((m) => m.name.toLowerCase());
-
-  const tieneOxidosCu = nombres.some((n) =>
-    ["malachite", "azurite", "chrysocolla", "cuprite"].includes(n)
-  );
-  const tieneOxidosFe = nombres.some((n) =>
-    ["limonite", "hematite", "goethite"].includes(n)
-  );
-  const tieneAuAg = nombres.some((n) => ["gold", "native gold", "silver"].includes(n));
-  const tieneSulfuros = nombres.some((n) =>
-    ["chalcopyrite", "bornite", "galena", "sphalerite", "pyrite"].includes(n)
-  );
+function buildConclusionesYRecomendaciones(globalMix: GlobalMix): ConclusionesYRecs {
+  const mixOrdenado =
+    [...(globalMix || [])]
+      .filter((m) => m && typeof m.pct === "number" && !!m.name)
+      .sort((a, b) => b.pct - a.pct);
 
   const conclusiones: string[] = [];
   const recomendaciones: string[] = [];
@@ -31,58 +22,185 @@ type ConclusionesYRecs = {
     );
     recomendaciones.push(
       "Repetir el muestreo con una muestra más representativa.",
-      "Complementar el reconocimiento por imagen con ensayos de laboratorio."
+      "Complementar el reconocimiento por imagen con ensayos de laboratorio geoquímico básico."
     );
     return { conclusiones, recomendaciones };
   }
 
+  // ================== NORMALIZAR NOMBRES (ES/EN) ==================
+  const normNames = mixOrdenado.map((m) =>
+    normalizeMineralName(m.name).toLowerCase()
+  );
+
+  function sumPct(regex: RegExp): number {
+    return mixOrdenado.reduce((acc, m, i) => {
+      return regex.test(normNames[i]) ? acc + m.pct : acc;
+    }, 0);
+  }
+
+  // 1) Óxidos / carbonatos de Cu
+  const pctOxCu = sumPct(
+    /(malaquita|malachite|azurita|azurite|crisocola|chrysocolla|cuprita|cuprite|brochantita|brochantite)/
+  );
+
+  // 2) Óxidos de Fe
+  const pctOxFe = sumPct(
+    /(limonita|limonite|goethita|goethite|hematita|hematite)/
+  );
+
+  // 3) Sulfuros (Cu, Fe, Pb, Zn, As)
+  const pctSulfuros = sumPct(
+    /(calcopirita|chalcopyrite|bornita|pyrite|pirita|arsenopirita|arsenopyrite|galena|sphalerite|esfalerita|covelina|covellite|calcosina|chalcocite)/
+  );
+
+  // 4) Silicatos típicos (ganga)
+  const pctSilicatos = sumPct(
+    /(feldespato|feldspar|cuarzo|quartz|muscovita|muscovite|biotita|biotite|anfibol|amphibole|piroxeno|pyroxene)/
+  );
+
+  // 5) Arcillas / alteración
+  const pctArcillas = sumPct(
+    /(caolinita|kaolinite|illita|illite|smectita|smectite|montmorillonita|montmorillonite|arcilla)/
+  );
+
+  // 6) Au / Ag
+  const pctAu = sumPct(/(oro nativo|oro|gold|electrum|electro)/);
+  const pctAg = sumPct(/(plata nativa|plata|silver|acantita|acanthite|argentita|argentite)/);
+
+  // ================== RESUMEN DE MEZCLA TOP 3 ==================
   const top = mixOrdenado.slice(0, 3);
-  const resumenTop = top.map((m) => `${m.name} (${m.pct.toFixed(2)}%)`).join(", ");
+  const resumenTop = top
+    .map((m) => `${normalizeMineralName(m.name)} (${m.pct.toFixed(2)}%)`)
+    .join(", ");
 
   conclusiones.push(
     `La mezcla mineral global está dominada por: ${resumenTop}.`
   );
 
-  if (tieneOxidosCu) {
+  // ================== BLOQUES PRINCIPALES DE CONCLUSIÓN ==================
+
+  // Cu óxidos / carbonatos
+  if (pctOxCu >= 10) {
+    const dominio = pctOxCu >= 30 ? "dominio de óxidos/carbonatos de cobre" : "presencia significativa de óxidos/carbonatos de cobre";
     conclusiones.push(
-      "Predominan minerales de oxidación de cobre (malaquita/azurita), lo que sugiere una zona de oxidación superficial asociada a mineralización cuprífera."
+      `Se observa ${dominio} (≈ ${round2(
+        pctOxCu
+      )} % del ensamblaje), compatible con zona de oxidación o transición de un sistema cuprífero.`
     );
   }
 
-  if (tieneOxidosFe) {
+  // Óxidos de Fe
+  if (pctOxFe >= 10) {
     conclusiones.push(
-      "La presencia importante de limonita u otros óxidos de hierro indica procesos intensos de intemperismo y alteración supergénica."
+      `La abundancia de óxidos/hidróxidos de hierro (≈ ${round2(
+        pctOxFe
+      )} %) sugiere un entorno fuertemente meteorizado (gossan o alteración supergénica).`
     );
   }
 
-  if (!tieneAuAg && !tieneSulfuros && tieneOxidosCu) {
+  // Sulfuros
+  if (pctSulfuros >= 5) {
+    const dominio =
+      pctSulfuros >= 25 ? "ensamblaje dominado por sulfuros metálicos" : "presencia clara de sulfuros metálicos";
     conclusiones.push(
-      "No se identifican sulfuros metálicos ni minerales de Au/Ag; el valor económico directo es incierto y requiere validación geoquímica."
+      `Se identifica ${dominio} (≈ ${round2(
+        pctSulfuros
+      )} %), lo que indica posible mineralización primaria o zona de transición sulfuros–óxidos.`
     );
   }
 
-  if (tieneOxidosCu) {
-    recomendaciones.push(
-      "Realizar muestreo más profundo para evaluar posible presencia de sulfuros primarios (calcopirita, bornita, etc.).",
-      "Enviar muestras a laboratorio para análisis de Cu total (ICP-OES o AAS).",
-      "Si se obtienen leyes > 0.3% Cu, ampliar prospección en un radio de 100–300 m."
+  // Silicatos / ganga
+  if (pctSilicatos >= 20) {
+    conclusiones.push(
+      `Existe una proporción importante de silicatos de ganga (≈ ${round2(
+        pctSilicatos
+      )} %: cuarzo/feldespatos/micas), que pueden diluir las leyes metálicas del material.`
     );
   }
 
-  if (tieneOxidosFe && !tieneSulfuros) {
-    recomendaciones.push(
-      "Considerar la zona como de interés geológico preliminar si las leyes resultan bajas.",
-      "Usar esta información para cartografía de alteración y estudios exploratorios."
+  // Arcillas
+  if (pctArcillas >= 5) {
+    conclusiones.push(
+      `La presencia de minerales arcillosos (≈ ${round2(
+        pctArcillas
+      )} %) puede asociarse a zonas de alteración hidrotermal avanzada o a meteorización intensa.`
     );
   }
 
+  // Potencial Au/Ag
+  if (pctAu > 0 || pctAg > 0) {
+    const partes: string[] = [];
+    if (pctAu > 0) partes.push(`oro (≈ ${round2(pctAu)} %)`);
+    if (pctAg > 0) partes.push(`plata (≈ ${round2(pctAg)} %)`);
+
+    conclusiones.push(
+      `Se reconocen indicios de minerales portadores de ${partes.join(
+        " y "
+      )}; el valor económico potencial depende de la ley real medida en laboratorio.`
+    );
+  }
+
+  if (
+    pctOxCu === 0 &&
+    pctOxFe === 0 &&
+    pctSulfuros === 0 &&
+    pctAu === 0 &&
+    pctAg === 0
+  ) {
+    conclusiones.push(
+      "El ensamblaje no muestra indicadores metalíferos claros; se interpreta principalmente como roca de ganga o material sin interés económico evidente."
+    );
+  }
+
+  // ================== RECOMENDACIONES (PRUEBAS MECÁNICAS + GEOQUÍMICA) ==================
+
+  // Recomendaciones base
   recomendaciones.push(
-    "Complementar estos resultados con datos geológicos regionales y mapas estructurales.",
-    "Confirmar siempre con ensayos químicos certificados antes de tomar decisiones técnicas o económicas."
+    "Registrar fotografías adicionales con diferentes ángulos e iluminación para refinar el reconocimiento mineral por imagen.",
+    "Describir en campo color, brillo, dureza estimada y tipo de fractura de los minerales más abundantes."
+  );
+
+  // Si hay sulfuros → primero agotar pruebas mecánicas
+  if (pctSulfuros >= 5) {
+    recomendaciones.push(
+      "Realizar pruebas mecánicas sobre los sulfuros: raya en placa de porcelana no esmaltada, observación cuidadosa del brillo metálico y evaluación de dureza relativa frente a vidrio, navaja y moneda.",
+      "Observar color de la raya (ej. amarilla–verdosa en calcosina/bornita, negra en otros sulfuros) y posibles iridiscencias superficiales.",
+      "Si tras las pruebas mecánicas no es posible discriminar qué sulfuro predomina (Cu, Fe, Pb, Zn, As), enviar submuestras frescas a análisis químico cuantitativo (ICP-OES/AA)."
+    );
+  }
+
+  // Si hay óxidos de Cu pero sin sulfuros claros
+  if (pctOxCu >= 10 && pctSulfuros < 5) {
+    recomendaciones.push(
+      "Tomar muestras frescas en profundidad (evitando únicamente costras superficiales de oxidación) para evaluar si existen sulfuros primarios de Cu en el subsuelo.",
+      "En caso de que las pruebas visuales y mecánicas sean consistentes con óxidos de cobre, enviar muestras compuestas a análisis de Cu total para estimar el potencial económico."
+    );
+  }
+
+  // Si hay muchos óxidos de Fe y poca firma metálica
+  if (pctOxFe >= 15 && pctSulfuros < 5 && pctOxCu < 5 && pctAu === 0 && pctAg === 0) {
+    recomendaciones.push(
+      "Tratar la zona como un gossan o horizonte de alteración: útil como guía exploratoria, pero no necesariamente económico por sí mismo.",
+      "Utilizar la información para cartografía de alteración y definir áreas con mayor potencial antes de invertir en estudios detallados."
+    );
+  }
+
+  // Arcillas / alteración
+  if (pctArcillas >= 10) {
+    recomendaciones.push(
+      "Verificar si la presencia de arcillas se asocia a estructuras (vetas, brechas, fracturas) o a mantos superficiales, para discriminar entre alteración hidrotermal y simple meteorización.",
+      "En zonas con arcillas y alguna firma metálica, considerar muestreos sistemáticos a lo largo de estructuras para definir tendencias de ley."
+    );
+  }
+
+  // Recomendación estándar final
+  recomendaciones.push(
+    "Antes de tomar cualquier decisión de explotación o inversión, confirmar los resultados con ensayos químicos certificados y, de ser posible, estudios geológicos y metalúrgicos básicos."
   );
 
   return { conclusiones, recomendaciones };
 }
+
 
 /** Catálogo base — Valores reales normalizados */
 const BASE_COMMODITIES: Commodity[] = [
@@ -151,21 +269,39 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 const toPct = (n: number, digits = 2) => `${n.toFixed(digits)} %`;
 
 /** Limpieza de texto */
-function sanitizeText(s: string): string {
-  if (!s) return "";
-  try {
-    let out = s.normalize && s.normalize("NFC") ? s.normalize("NFC") : s;
-    out = out
-      .replace(/\u2022/g, "-")
-      .replace(/\uFFFD/g, "")
-      .replace(/\r\n/g, "\n")
-      .replace(/\r/g, "\n");
-    out = out.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
-    return out.trim();
-  } catch {
-    return s.replace(/\u2022/g, "-").trim();
+/** Limpieza de texto */
+function sanitizeText(raw: unknown): string {
+  // Caso nulo/indefinido
+  if (raw === null || raw === undefined) return "";
+
+  let s: string;
+
+  // Si ya es string, lo usamos tal cual
+  if (typeof raw === "string") {
+    s = raw;
+  } else if (Array.isArray(raw)) {
+    // Si viene un arreglo (por ejemplo, lista de cosas)
+    s = raw
+      .map((item) =>
+        item === null || item === undefined ? "" : String(item)
+      )
+      .join(" ");
+  } else if (typeof raw === "object") {
+    // Si viene un objeto, lo convertimos a texto legible
+    try {
+      s = JSON.stringify(raw);
+    } catch {
+      s = String(raw);
+    }
+  } else {
+    // number, boolean, etc.
+    s = String(raw);
   }
+
+  // Limpieza básica de espacios
+  return s.replace(/\s+/g, " ").trim();
 }
+
 /** Normaliza nombres de minerales a ESPAÑOL y fusiona variantes español/inglés/sin acentos */
 function normalizeMineralName(name: string): string {
   const raw = name || "";
@@ -542,14 +678,13 @@ function interpretMix(mix: GlobalMix): string {
   return sanitizeText(lines.join("\n"));
 }
 
-/** Construye tabla económica (alineada con UI: Au/Ag en USD/g, resto en USD/t) */
+/** Construye tabla económica (alineada con la UI: Au/Ag/Pt/Pd en USD/g, resto en USD/kg) */
 function buildEconomics(mix: GlobalMix, overrides?: EconOverrides) {
   const currency: CurrencyCode = overrides?.currency || "USD";
   const pricesOverride = overrides?.prices || {};
   const payablesOverride = overrides?.payables || {};
 
-  // Tipos de cambio: soporta formato antiguo (fxUsdToPen / fxEurToPen)
-  // y el nuevo anidado (fx: { usdToPen, eurToPen })
+  // Tipos de cambio: formato antiguo y nuevo
   const fxNested = overrides?.fx || {};
 
   const usdPenRate =
@@ -612,22 +747,19 @@ function buildEconomics(mix: GlobalMix, overrides?: EconOverrides) {
         ? payablesOverride[c.code]!
         : c.payableDefault;
 
-    // ✅ 1) Precio base EXACTAMENTE igual que la UI
-//    - Au, Ag, Pt, Pd → USD/g
-//    - Todos los demás → USD/kg (NO más USD/t)
-const basePrice =
-  typeof pricesOverride[c.code] === "number"
-    ? pricesOverride[c.code]!
-    : c.priceDefault;
+    // 1) Precio base EXACTAMENTE igual que la UI:
+    //    - Au, Ag, Pt, Pd → USD/g
+    //    - Resto → USD/kg
+    const basePrice =
+      typeof pricesOverride[c.code] === "number"
+        ? pricesOverride[c.code]!
+        : c.priceDefault;
 
-const isPrecious =
-  c.code === "Au" ||
-  c.code === "Ag" ||
-  c.code === "Pt" ||
-  c.code === "Pd";
+    const isPrecious =
+      c.code === "Au" || c.code === "Ag" || c.code === "Pt" || c.code === "Pd";
 
-// 👉 AQUÍ EL CAMBIO CLAVE
-const basePriceUnit = isPrecious ? "USD/g" : "USD/kg";
+    // Unidad interna del precio en USD
+    const basePriceUnit = isPrecious ? "USD/g" : "USD/kg";
 
     // 2) Conversión de moneda (solo divisa, no masas)
     let adjustedPrice = basePrice;
@@ -647,48 +779,40 @@ const basePriceUnit = isPrecious ? "USD/g" : "USD/kg";
     const payQty = round2(tenor * payable);
 
     // 4) Valor económico por tonelada de mineral
-    //    Según combinación:
-    //    - Si precio es por g (USD/g, PEN/g, EUR/g):
-    //        * Si tenor es g/t → valor = payQty[g/t] * precio
-    //        * Si tenor es kg/t → valor = payQty[kg/t] * 1000 [g/kg] * precio
-    //    - Si precio es por t (USD/t, PEN/t, EUR/t):
-    //        * Si tenor es kg/t → valor = (payQty[kg/t] / 1000) [t] * precio
-    //        * Si tenor es g/t → valor = (payQty[g/t] / 1_000_000) [t] * precio
+    //    Manteniendo coherencia:
+    //    - Si el precio es por g:
+    //        * tenor g/t → valor = g/t * (moneda/g)
+    //        * tenor kg/t → (kg/t * 1000 g/kg) * (moneda/g)
+    //    - Si el precio es por kg:
+    //        * tenor kg/t → valor = kg/t * (moneda/kg)
+    //        * tenor g/t → (g/t / 1000) kg/t * (moneda/kg)
     let valuePerTon = 0;
 
-    // ✅ NUEVA LÓGICA: TODA alineada con UI
-//    - Precios en USD/g o USD/kg
-//    - Nada de USD/t
-
-if (basePriceUnit === "USD/g") {
-  if (c.unit === "g/t") {
-    // g/t * USD/g = USD/t
-    valuePerTon = payQty * adjustedPrice;
-  } else {
-    // kg/t → g/t
-    const grams = payQty * 1000;
-    valuePerTon = grams * adjustedPrice;
-  }
-} else {
-  // USD/kg
-  if (c.unit === "kg/t") {
-    // kg/t * USD/kg = USD/t
-    valuePerTon = payQty * adjustedPrice;
-  } else {
-    // g/t → kg/t
-    const kilos = payQty / 1000;
-    valuePerTon = kilos * adjustedPrice;
-  }
-}
+    if (basePriceUnit === "USD/g") {
+      // precio por gramo
+      if (c.unit === "g/t") {
+        valuePerTon = payQty * adjustedPrice;
+      } else if (c.unit === "kg/t") {
+        const grams = payQty * 1000;
+        valuePerTon = grams * adjustedPrice;
+      }
+    } else {
+      // precio por kilogramo
+      if (c.unit === "kg/t") {
+        valuePerTon = payQty * adjustedPrice;
+      } else if (c.unit === "g/t") {
+        const kilos = payQty / 1000;
+        valuePerTon = kilos * adjustedPrice;
+      }
+    }
 
     const value = round2(valuePerTon);
 
-    // 5) Unidad de precio para mostrar en el PDF:
+    // 5) Unidad del precio para mostrar en el PDF:
     //    - Au, Ag, Pt, Pd → moneda/g
-    //    - Resto → moneda/t
+    //    - Resto → moneda/kg
     const massUnit = isPrecious ? "g" : "kg";
-const finalPriceUnit = `${finalCurrency}/${massUnit}`;
-
+    const finalPriceUnit = `${finalCurrency}/${massUnit}`;
 
     return {
       ...c,
@@ -711,13 +835,12 @@ export async function buildReportPdfPlus(args: {
   byImage: ImageResult[];
   opts?: BuildReportOptions;
 }): Promise<jsPDF> {
- const { mixGlobal: rawMixGlobal, byImage, opts } = args;
+  const { mixGlobal: rawMixGlobal, byImage, opts } = args;
 
-// 🔹 Normalizamos mezcla global (para evitar "Óxidos de hierro" / "Iron Oxides" duplicados)
-const mixGlobal = mergeGlobalMix(rawMixGlobal || []);
+  // 🔹 Normalizamos mezcla global (evitar duplicados por idioma/etiqueta)
+  const mixGlobal = mergeGlobalMix(rawMixGlobal || []);
 
-const doc = new jsPDF({ unit: "pt", format: "a4" });
-
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
 
   const margin = 42;
   const pageW = doc.internal.pageSize.getWidth();
@@ -729,7 +852,7 @@ const doc = new jsPDF({ unit: "pt", format: "a4" });
   const cellText = [20, 20, 20];
   doc.setTextColor(...cellText);
 
-  // Título
+  // ================= ENCABEZADO =================
   doc.setFont("helvetica", "bold");
   doc.setFontSize(14);
   doc.text(
@@ -739,7 +862,6 @@ const doc = new jsPDF({ unit: "pt", format: "a4" });
   );
   y += 18;
 
-  // Fecha
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   const when = opts?.dateISO
@@ -748,7 +870,7 @@ const doc = new jsPDF({ unit: "pt", format: "a4" });
   doc.text(`Fecha: ${when}`, margin, y);
   y += 14;
 
-  // Mapa
+  // ================= MAPA ESTÁTICO =================
   if (typeof opts?.lat === "number" && typeof opts?.lng === "number") {
     const mapW = 250;
     const mapH = 140;
@@ -787,7 +909,7 @@ const doc = new jsPDF({ unit: "pt", format: "a4" });
     y = Math.max(y, topY + mapH + 28);
   }
 
-  // Nota
+  // ================= NOTA INICIAL =================
   if (opts?.note) {
     doc.setFontSize(9);
     doc.setFont("helvetica", "normal");
@@ -801,47 +923,77 @@ const doc = new jsPDF({ unit: "pt", format: "a4" });
     y += 6;
   }
 
- // Mezcla Global
-doc.setFont("helvetica", "bold");
-doc.setFontSize(12);
-doc.text("Mezcla Global (normalizada a 100 %)", margin, y);
-y += 10;
+  // ================= MEZCLA GLOBAL =================
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.text("Mezcla Global (normalizada a 100 %)", margin, y);
+  y += 10;
 
-autoTable(doc, {
-  startY: y + 6,
-  head: [["Mineral", "%"]],
-  body: mixGlobal.map((m) => [
-    normalizeMineralName(m.name),  // 👈 ya normalizado
-    toPct(m.pct),
-  ]),
-  styles: { fontSize: 9, cellPadding: 4, textColor: cellText },
-  headStyles: { fillColor: headFill, textColor: headText },
-  margin: { left: margin, right: margin },
-  theme: "grid",
-});
+  autoTable(doc, {
+    startY: y + 6,
+    head: [["Mineral", "%"]],
+    body: mixGlobal.map((m) => [
+      normalizeMineralName(m.name),
+      toPct(m.pct),
+    ]),
+    styles: { fontSize: 9, cellPadding: 4, textColor: cellText },
+    headStyles: { fillColor: headFill, textColor: headText },
+    margin: { left: margin, right: margin },
+    theme: "grid",
+  });
 
   y = (doc as any).lastAutoTable.finalY + 14;
 
-  // Interpretación
- doc.setFont("helvetica", "bold");
-doc.setFontSize(12);
-doc.text("Interpretación preliminar (automática)", margin, y);
-y += 22;   // 🔹 más aire bajo el título
+  // ================= INTERPRETACIÓN PRELIMINAR =================
+  const interpretation = (opts as any)?.interpretation as
+    | { geology?: string; economics?: string; caveats?: string }
+    | undefined;
 
-doc.setFont("helvetica", "normal");
-doc.setFontSize(10);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.text("Interpretación preliminar", margin, y);
+  y += 8;
 
-const interLines = doc.splitTextToSize(
-  sanitizeText(interpretMix(mixGlobal)),
-  pageW - margin * 2
-);
-doc.text(interLines, margin, y);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
 
-// 🔹 más espacio después del bloque
-y += 14 * interLines.length + 20;
+  if (interpretation) {
+    const geoText = sanitizeText(interpretation.geology || "");
+    const ecoText = sanitizeText(interpretation.economics || "");
+    const cavText = sanitizeText(interpretation.caveats || "");
 
+    autoTable(doc, {
+      startY: y,
+      margin: { left: margin, right: margin },
+      styles: {
+        fontSize: 8,
+        cellPadding: { top: 3, right: 3, bottom: 3, left: 3 },
+      },
+      columnStyles: {
+        0: { cellWidth: 70, fontStyle: "bold" }, // títulos más anchos
+        1: { cellWidth: pageW - margin * 2 - 70 },
+      },
+      body: [
+        ["Geología", geoText || "—"],
+        ["Economía", ecoText || "—"],
+        ["Advertencias", cavText || "—"],
+      ],
+    });
 
-  // Resultados por imagen
+    y = (doc as any).lastAutoTable.finalY + 14;
+  } else {
+    const fallback =
+      "No se recibió interpretación automática desde la aplicación para esta muestra. " +
+      "Puedes generar una nueva interpretación en la pantalla principal y volver a exportar el PDF.";
+    const interLines = doc.splitTextToSize(
+      sanitizeText(fallback),
+      pageW - margin * 2
+    );
+    doc.text(interLines, margin, y);
+    y += 14 * interLines.length + 20;
+  }
+
+  // ================= RESULTADOS POR IMAGEN =================
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
   doc.text("Resultados por imagen", margin, y);
@@ -850,89 +1002,80 @@ y += 14 * interLines.length + 20;
   autoTable(doc, {
     startY: y + 6,
     head: [["Imagen", "Top minerales (%)", "Exclusiones"]],
+    body: byImage.map((img, idx) => {
+      const topMinerals = img.minerals
+        .slice(0, 3)
+        .map((m) => {
+          const label = normalizeMineralName(m.name);
+          return `${label} (${m.pct.toFixed(2)}%)`;
+        })
+        .join(", ");
 
-        body: byImage.map((img, idx) => {
-    const topMinerals = img.minerals
-      .slice(0, 3)
-      .map((m) => {
-        const label = normalizeMineralName(m.name);
-        return `${label} (${m.pct.toFixed(2)}%)`;
-      })
-      .join(", ");
-
-    return [
-      img.filename || `Imagen ${idx + 1}`,
-      topMinerals,
-      img.excluded?.reason || "",
-    ];
-  }),
-
-
+      return [
+        img.filename || `Imagen ${idx + 1}`,
+        topMinerals,
+        img.excluded?.reason || "",
+      ];
+    }),
     styles: { fontSize: 9, cellPadding: 4, textColor: cellText },
     headStyles: { fillColor: headFill, textColor: headText },
     margin: { left: margin, right: margin },
     theme: "grid",
   });
+
   y = (doc as any).lastAutoTable.finalY + 14;
 
- // Estimación económica
-doc.setFont("helvetica", "bold");
-doc.setFontSize(12);
-doc.text("Estimación económica (referencial)", margin, y);
-y += 22; // 🔹 más espacio bajo el título
+  // ================= ESTIMACIÓN ECONÓMICA =================
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.text("Estimación económica (referencial)", margin, y);
+  y += 18;
 
-// Nota clara sobre unidades y tipo de cambio
-doc.setFont("helvetica", "normal");
-doc.setFontSize(9);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.text(
+    "Todos los precios base están en USD; se convierten a la moneda seleccionada según el tipo de cambio configurado en la app.",
+    margin,
+    y
+  );
+  y += 14;
 
-const econNote = doc.splitTextToSize(
-  "Todos los precios base están en USD; se convierten a la moneda seleccionada según el tipo de cambio configurado en la app.",
-  pageW - margin * 2
-);
+  const econ = buildEconomics(mixGlobal, opts?.econ);
+  const econRows = econ.rows.filter((r) => r.tenor > 0 || r.value > 0);
 
-doc.text(econNote, margin, y);
-
-// 🔹 Más espacio después de la nota
-y += econNote.length * 14 + 14;
-
-// Generar tabla económica
-const econ = buildEconomics(mixGlobal, opts?.econ);
-
-autoTable(doc, {
-  startY: y + 6,  // 🔹 pequeño margen antes de la tabla
-  head: [
-    [
-      "Commodity",
-      "Tenor",
-      "Unidad",
-      "Payable",
-      "Cant. Pagable",
-      "Precio",
-      "Valor",
-      "Moneda",
+  autoTable(doc, {
+    startY: y + 6,
+    head: [
+      [
+        "Commodity",
+        "Tenor",
+        "Unidad",
+        "Payable",
+        "Cant. Pagable",
+        "Precio",
+        "Valor",
+        "Moneda",
+      ],
     ],
-  ],
-  body: econ.rows.map((r) => [
-    r.display,
-    r.tenor.toFixed(2),
-    r.unit,
-    `${(r.payable * 100).toFixed(0)} %`,
-    r.payQty.toFixed(2),
-    `${r.price.toFixed(2)} ${r.priceUnit}`,
-    r.value.toFixed(2),
-    `${r.currency}`,
-  ]),
-  styles: { fontSize: 9, cellPadding: 4, textColor: cellText },
-  headStyles: { fillColor: headFill, textColor: headText },
-  margin: { left: margin, right: margin },
-  theme: "grid",
-});
+    body: econRows.map((r) => [
+      r.display,
+      r.tenor.toFixed(2),
+      r.unit,
+      `${(r.payable * 100).toFixed(0)} %`,
+      r.payQty.toFixed(2),
+      `${r.price.toFixed(2)} ${r.priceUnit}`,
+      r.value.toFixed(2),
+      `${r.currency}`,
+    ]),
+    styles: { fontSize: 9, cellPadding: 4, textColor: cellText },
+    headStyles: { fillColor: headFill, textColor: headText },
+    margin: { left: margin, right: margin },
+    theme: "grid",
+  });
 
-// 🔹 Más aire debajo de la tabla
-y = (doc as any).lastAutoTable.finalY + 20;
+  y = (doc as any).lastAutoTable.finalY + 20;
 
-
-    // ================= YACIMIENTOS / CANTERAS CERCANAS =================
+  // ================= YACIMIENTOS / CANTERAS CERCANAS =================
   {
     const sources: any[] = Array.isArray(opts?.nearbySources)
       ? (opts!.nearbySources as any[])
@@ -962,7 +1105,6 @@ y = (doc as any).lastAutoTable.finalY + 20;
         sanitizeText(src.provider || src.source || ""),
       ]);
     } else {
-      // 👉 Mensaje cuando no hay yacimientos cercanos disponibles
       body = [
         [
           "-",
@@ -986,59 +1128,156 @@ y = (doc as any).lastAutoTable.finalY + 20;
 
     y = (doc as any).lastAutoTable.finalY + 18;
   }
+// ================= CONCLUSIONES Y RECOMENDACIONES (OPTIMIZADO v2) =================
+try {
 
-  // ================= CONCLUSIONES Y RECOMENDACIONES =================
-  try {
-    const { conclusiones, recomendaciones } =
-      buildConclusionesYRecomendaciones(mixGlobal);
+  const base = buildConclusionesYRecomendaciones(mixGlobal);
+  let conclusiones: string[] = [];
+  let recomendaciones: string[] = [];
 
-    // Forzar nueva página
-    doc.addPage();
-    y = margin;
+  // === 1. CONCLUSIÓN GENERAL SOBRE MEZCLA ===
+  const top3 = mixGlobal.slice(0, 3)
+    .map(m => `${normalizeMineralName(m.name)} (${m.pct.toFixed(2)}%)`)
+    .join(", ");
+  
+  conclusiones.push(
+    `La mezcla mineral analizada está compuesta principalmente por: ${top3}.`
+  );
 
-    // --- TÍTULO GENERAL ---
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(13);
-    doc.text("Conclusiones y recomendaciones", margin, y);
-    y += 24;
+  // === 2. CONCLUSIONES TÉCNICAS PROFUNDAS ===
+  conclusiones.push(...base.conclusiones);
 
-    // --- CONCLUSIONES ---
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.text("Conclusiones:", margin, y);
-    y += 18;
+  // === 3. CONTEXTO GEOESPACIAL (yacimientos cercanos) ===
+  const nearby = Array.isArray(opts?.nearbySources) ? opts!.nearbySources : [];
+  if (nearby.length > 0) {
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
+    const metalsFound = new Set<string>();
+    nearby.forEach((y) => {
+      const text = `${y.name || ""} ${y.mineral || ""} ${y.commodity || ""}`.toUpperCase();
+      if (/ORO|AU/.test(text)) metalsFound.add("oro (Au)");
+      if (/COBRE|CU/.test(text)) metalsFound.add("cobre (Cu)");
+      if (/PLATA|AG/.test(text)) metalsFound.add("plata (Ag)");
+      if (/HIERRO|FE/.test(text)) metalsFound.add("hierro (Fe)");
+      if (/ZINC|ZN/.test(text)) metalsFound.add("zinc (Zn)");
+      if (/PLOMO|PB/.test(text)) metalsFound.add("plomo (Pb)");
+    });
 
-    const concText = doc.splitTextToSize(
-      sanitizeText(conclusiones.map((c) => `• ${c}`).join("\n")),
-      pageW - margin * 2
-    );
-
-    doc.text(concText, margin, y);
-    y += concText.length * 14 + 22;
-
-    // --- RECOMENDACIONES ---
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.text("Recomendaciones:", margin, y);
-    y += 18;
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-
-    const recText = doc.splitTextToSize(
-      sanitizeText(recomendaciones.map((r) => `• ${r}`).join("\n")),
-      pageW - margin * 2
-    );
-
-    doc.text(recText, margin, y);
-    y += recText.length * 14 + 30;
-  } catch (e) {
-    console.error("Error en conclusiones/recomendaciones PDF:", e);
-    y += 20;
+    if (metalsFound.size > 0) {
+      conclusiones.push(
+        `En el entorno próximo se registran ocurrencias y yacimientos asociados a ${Array.from(metalsFound).join(
+          ", "
+        )}, lo cual coincide parcialmente con la firma mineral observada en la muestra.`
+      );
+    }
   }
+
+  // === 4. INTEGRACIÓN NATURAL DE LA INTERPRETACIÓN PRELIMINAR ===
+  // Solo aparece si aporta contenido distinto
+  if (interpretation?.geology) {
+    const g = sanitizeText(interpretation.geology);
+    if (g && !conclusiones.some(c => c.includes(g.slice(0, 20)))) {
+      conclusiones.push(`Según la interpretación preliminar asistida por IA: ${g}`);
+    }
+  }
+
+  if (interpretation?.economics) {
+    const e = sanitizeText(interpretation.economics);
+    conclusiones.push(`Desde una perspectiva económica preliminar: ${e}`);
+  }
+
+  // ============================================================
+  //                      RECOMENDACIONES
+  // ============================================================
+
+  // (A) Base general
+  recomendaciones.push(
+    "Registrar fotografías adicionales con diferentes ángulos e iluminación.",
+    "Describir en campo color, brillo, dureza aproximada y tipo de fractura.",
+    "Romper muestras frescas para descartar alteración superficial."
+  );
+
+  // (B) Ajustes según el mix mineralógico
+
+  const pctCu = mixGlobal.filter(m => /malaquita|azurita|crisocola|cuprita|tenorita/i.test(m.name)).reduce((a,b)=>a+b.pct,0);
+  const pctFe = mixGlobal.filter(m => /limonita|goethita|hematita|magnetita/i.test(m.name)).reduce((a,b)=>a+b.pct,0);
+  const pctSulf = mixGlobal.filter(m => /pirita|pyrite|calcopirita|chalcopyrite|bornita|covelina/i.test(m.name)).reduce((a,b)=>a+b.pct,0);
+
+  if (pctCu >= 10) {
+    recomendaciones.push(
+      "Evaluar la posibilidad de sulfuros primarios de Cu en profundidad; la zona podría corresponder a un dominio oxidado o de transición.",
+      "Si la mineralización es predominantemente oxidada, realizar análisis de Cu total para determinar potencial económico."
+    );
+  }
+
+  if (pctFe >= 15 && pctCu < 10 && pctSulf < 5) {
+    recomendaciones.push(
+      "La abundancia de óxidos/hidróxidos de Fe sugiere gossan; utilizarlo como guía para dirigir muestreo hacia zonas frescas con mayor potencial."
+    );
+  }
+
+  if (pctSulf >= 5) {
+    recomendaciones.push(
+      "Realizar pruebas mecánicas sobre posibles sulfuros (raya, brillo metálico, dureza) para discriminar especies.",
+      "Si persisten dudas, enviar submuestras frescas a ICP-OES/AA."
+    );
+  }
+
+  // (C) Integración de yacimientos cercanos
+  if (nearby.length > 0) {
+    recomendaciones.push(
+      "Correlacionar los resultados con los yacimientos detectados en el entorno, priorizando muestreo sistemático a lo largo de estructuras o zonas alteradas."
+    );
+  }
+
+  // (D) Cierre obligatorio
+  recomendaciones.push(
+    "Este informe es preliminar y requiere validación mediante ensayos químicos certificados.",
+    "No utilizar esta estimación visual asistida por IA como único sustento para decisiones económicas o de explotación."
+  );
+
+  // ============================================================
+  //                   IMPRESIÓN EN EL PDF
+  // ============================================================
+
+  doc.addPage();
+  let Y = margin;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(13);
+  doc.text("Conclusiones y recomendaciones", margin, Y);
+  Y += 24;
+
+  // --- CONCLUSIONES ---
+  doc.setFontSize(11);
+  doc.text("Conclusiones:", margin, Y);
+  Y += 16;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  const concText = doc.splitTextToSize(
+    conclusiones.map(c => `• ${c}`).join("\n"),
+    pageW - margin * 2
+  );
+  doc.text(concText, margin, Y);
+  Y += concText.length * 14 + 22;
+
+  // --- RECOMENDACIONES ---
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.text("Recomendaciones:", margin, Y);
+  Y += 18;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  const recText = doc.splitTextToSize(
+    recomendaciones.map(r => `• ${r}`).join("\n"),
+    pageW - margin * 2
+  );
+  doc.text(recText, margin, Y);
+
+} catch (err) {
+  console.error("Error en conclusiones/recomendaciones PDF v2:", err);
+}
 
   // ================= PIE DE PÁGINA =================
   const footerText = sanitizeText(

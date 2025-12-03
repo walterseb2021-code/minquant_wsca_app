@@ -319,52 +319,100 @@ function normalizeTo100(results: MineralResult[]): MineralResult[] {
   }
   return rounded;
 }
+// === Detectores simples para minerales preciosos (Au / Ag) ===
+function isGoldLike(name: string): boolean {
+  const n = String(name || "").toLowerCase();
+  return /(oro nativo|oro|gold|electrum|calaverita)/.test(n);
+}
+
+function isSilverLike(name: string): boolean {
+  const n = String(name || "").toLowerCase();
+  return /(plata nativa|plata|silver|acantita|argentita)/.test(n);
+}
 
 /**
  * Filtro principal por imagen.
  * - Aplica limpieza, fusiones y umbrales.
  * - Si TODO queda fuera, conservamos las 2 mejores hipótesis (top-2 por confianza)
  *   para evitar el “Indeterminado” sistemático y dar pistas al usuario.
+ * - EXTRA: si hay oro/plata detectados aunque sea débil, intentamos conservarlos.
  */
 function filterPerImageWithFallback(list: MineralResult[]): {
   kept: MineralResult[];
   droppedForLowConf: boolean;
 } {
- let r = (list || [])
-  .map(it => {
-    const cleaned = cleanName(it.name);
-    const normalized = normalizeMineralName(cleaned);
+  let r = (list || [])
+    .map((it) => {
+      const cleaned = cleanName(it.name);
+      const normalized = normalizeMineralName(cleaned);
 
-    return {
-      name: normalized, // 👈 ya normalizado
-      pct: Number(it.pct ?? 0),
-      confidence: typeof it.confidence === "number" ? it.confidence : undefined,
-      evidence: it.evidence,
-    };
-  })
-  .filter(it => it.name && it.pct >= 0);
+      return {
+        name: normalized, // 👈 ya normalizado (español unificado)
+        pct: Number(it.pct ?? 0),
+        confidence:
+          typeof it.confidence === "number" ? it.confidence : undefined,
+        evidence: it.evidence,
+      };
+    })
+    .filter((it) => it.name && it.pct >= 0);
 
-
+  // fusionar duplicados (pirita/Pyrite → "Pirita", etc.)
   r = mergeDuplicates(r);
 
-  // 1) Filtro “duro”
-  let kept = r.filter(it => (it.confidence ?? 0) >= CONF_MIN && it.pct >= PCT_MIN);
-  kept.sort((a, b) => b.pct - a.pct || (b.confidence ?? 0) - (a.confidence ?? 0));
+  // 1) Filtro “duro” base
+  let kept = r.filter(
+    (it) => (it.confidence ?? 0) >= CONF_MIN && it.pct >= PCT_MIN
+  );
+  kept.sort(
+    (a, b) =>
+      b.pct - a.pct || (b.confidence ?? 0) - (a.confidence ?? 0)
+  );
 
+  // marcamos si el filtro duro dejó todo vacío
   const droppedForLowConf = kept.length === 0;
 
-  // 2) Fallback: si no quedó nada, devolvemos top-2 por confianza (aunque sean < CONF_MIN)
+  // 2) Fallback: si no quedó nada, devolvemos top-2 por confianza
   if (kept.length === 0 && r.length) {
-    const ranked = [...r].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0) || b.pct - a.pct);
-    kept = ranked.slice(0, Math.min(2, ranked.length)).map(x => ({
+    const ranked = [...r].sort(
+      (a, b) =>
+        (b.confidence ?? 0) - (a.confidence ?? 0) || b.pct - a.pct
+    );
+    kept = ranked.slice(0, Math.min(2, ranked.length)).map((x) => ({
       ...x,
-      // “suavizamos” % para que sumen 100 entre ellas
+      // “suavizamos” % para que sumen algo razonable
       pct: x.pct > 0 ? x.pct : 1,
     }));
   }
 
+  // 3) Oro/plata: si el filtro duro los eliminó pero había candidatos,
+  //    añadimos el MEJOR oro y/o plata como “pista” antes de normalizar.
+  const goldCandidates = r.filter((it) => isGoldLike(it.name));
+  const silverCandidates = r.filter((it) => isSilverLike(it.name));
+
+  const hasGoldAlready = kept.some((k) => isGoldLike(k.name));
+  const hasSilverAlready = kept.some((k) => isSilverLike(k.name));
+
+  const pushBest = (cands: MineralResult[]) => {
+    if (!cands.length) return;
+    const best = [...cands].sort(
+      (a, b) =>
+        (b.confidence ?? 0) - (a.confidence ?? 0) || b.pct - a.pct
+    )[0];
+    kept.push(best);
+  };
+
+  if (!hasGoldAlready && goldCandidates.length) {
+    pushBest(goldCandidates);
+  }
+
+  if (!hasSilverAlready && silverCandidates.length) {
+    pushBest(silverCandidates);
+  }
+
+  // 4) Normalizar a 100 % al final
   return { kept: normalizeTo100(kept), droppedForLowConf };
 }
+
 
 function consensusAcrossImages(perImage: { results: MineralResult[] }[]): string[] {
   const count: Record<string, { n: number; maxConf: number }> = {};
@@ -544,6 +592,11 @@ export async function POST(req: Request) {
           "timeout"
         );
         const rawText = res?.response?.text?.() ?? "";
+        // DEBUG: mostrar respuesta cruda de Gemini solo en desarrollo
+if (process.env.NODE_ENV !== "production") {
+  console.log("🧪 [Gemini RAW RESPONSE]");
+  console.log(rawText);
+}
         const parsed = extractJson(rawText) ?? {};
         const arr = Array.isArray((parsed as any).results) ? (parsed as any).results : [];
         const results: MineralResult[] = (arr as MineralResult[]).filter(Boolean);
@@ -602,43 +655,79 @@ export async function POST(req: Request) {
 
     const global = computeGlobal(perImage);
 
-    // --------- Interpretación breve (geología/economía/advertencias)
-    const names = global.map(g => normalizeMineralName(g.name).toLowerCase());
+        // --------- Interpretación breve (geología/economía/advertencias)
+    const normGlobal = global.map(g => ({
+      name: normalizeMineralName(g.name),
+      pct: g.pct ?? 0,
+    }));
+
+    const names = normGlobal.map(g => g.name.toLowerCase());
+
+    // Firmas básicas
     const hasCuSec = names.some((n) =>
-  /(malaquita|malachite|azurita|azurite|crisocola|chrysocolla|cuprita|cuprite|bornita|bornite|calcopirita|chalcopyrite)/i.test(
-    n
-  )
-);
+      /(malaquita|azurita|crisocola|cuprita|tenorita|calcopirita|bornita|enargita)/i.test(n)
+    );
 
     const hasFeOx = names.some((n) =>
-  /(limonita|limonite|goethita|goethite|hematita|hematite)/i.test(n)
-);
-const hasAuAg = names.some((n) =>
-  /(pirita|pyrite|arsenopirita|arsenopyrite|galena|esfalerita|sphalerite|tetraedrita|electrum|oro|gold|plata|silver)/i.test(
-    n
-  )
-);
+      /(limonita|hematita|goethita|oxidos? de hierro)/i.test(n)
+    );
 
-    
+    const hasAuAgSulfuros = names.some((n) =>
+      /(pirita|arsenopirita|galena|esfalerita|tetraedrita|electrum|oro nativo|plata nativa)/i.test(n)
+    );
+
+    const hasQuartz = names.some((n) =>
+      /(cuarzo)/i.test(n)
+    );
+
+    // Peso de óxidos de Fe en el mix global
+    const feOxPct = normGlobal
+      .filter(g =>
+        /(limonita|hematita|goethita|oxidos? de hierro)/i.test(g.name.toLowerCase())
+      )
+      .reduce((s, g) => s + g.pct, 0);
+
+    // Presencia de sulfuros/base metals "visibles"
+    const hasBaseMetals = names.some((n) =>
+      /(calcopirita|bornita|esfalerita|galena|enargita)/i.test(n)
+    );
+
+    // Patrón de gossan aurífero indirecto:
+    // - Óxidos de Fe significativos
+    // - Cuarzo presente
+    // - Sin sulfuros/base metals dominantes claros
+    const hasGossanAuPattern =
+      feOxPct >= 20 &&   // puedes subir/bajar este umbral si quieres
+      hasFeOx &&
+      hasQuartz &&
+      !hasBaseMetals;
 
     const interpretation = {
       geology:
         hasCuSec
-          ? "Textura compatible con zona de oxidación de cobre (malaquita/azurita) con óxidos de Fe."
+          ? "Textura compatible con zona de oxidación de cobre (malaquita/azurita, crisocola u otros) con óxidos de Fe."
+          : hasGossanAuPattern
+          ? "Textura y color compatibles con zona de oxidación (gossan) rica en óxidos de hierro sobre matriz cuarzo–feldespática."
           : hasFeOx
-          ? "Predominio de óxidos/hidróxidos de Fe; posible alteración supergénica."
-          : "Asociación general sin indicador metalífero dominante.",
+          ? "Predominio de óxidos/hidróxidos de Fe; posible alteración supergénica sobre mineralización previa."
+          : "Asociación general sin indicador metalífero dominante en superficie.",
+
       economics:
         hasCuSec
-          ? "Potencial por Cu si % pagable y tonelaje lo justifican; verificar con análisis químico."
-          : hasAuAg
-          ? "Posible sistema polimetálico con Au/Ag subordinados; confirmar en laboratorio."
-          : "Sin evidencia clara de commodity económico; se requiere verificación analítica.",
+          ? "Potencial por Cu si la fracción pagable y el tonelaje lo justifican; verificar con análisis químico de Cu total y estudios metalúrgicos."
+          : hasGossanAuPattern
+          ? "Posible asociación a sistema aurífero con oro fino no visible alojado en sulfuros alterados. Requiere ensayos geoquímicos específicos para Au (ensayo al fuego, AA u otro método certificado) para confirmar."
+          : hasAuAgSulfuros
+          ? "Posible sistema polimetálico con participación de Au/Ag y sulfuros de base; confirmar potencial económico con análisis de leyes y recuperaciones."
+          : "Sin evidencia clara de commodity económico directo a partir de la observación visual; se requiere verificación analítica.",
+
       caveats:
-        "Estimación visual asistida por IA. Confirmar con ensayo al fuego (Au/Ag) e ICP/AA (Cu y otros). Considerar heterogeneidad de muestra.",
+        "Estimación visual asistida por IA. No reemplaza ensayos de laboratorio ni estudios geológicos detallados. Confirmar siempre con análisis químicos certificados (Au/Ag por ensayo al fuego/AA; Cu, Pb, Zn y otros por ICP/AA) antes de tomar decisiones técnicas o económicas.",
     };
 
     return Response.json({ perImage, global, excluded, interpretation }, { status: 200 });
+
+
   } catch (e: any) {
     return Response.json({ error: e?.message || "Error analizando" }, { status: 500 });
   }

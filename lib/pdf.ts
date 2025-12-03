@@ -245,6 +245,84 @@ async function aggregateByCommodity(results: MineralResult[]) {
     .map(([mineral, gradePct]) => ({ mineral, gradePct: +gradePct.toFixed(2) }))
     .sort((a, b) => b.gradePct - a.gradePct);
 }
+// Clasifica el nombre del feature para evitar confusiones:
+// Quebradas, fallas, ríos, minas, canteras, concesiones, etc.
+function buildTypedName(rawName: string, s: any): string {
+  if (!rawName) return "Sin nombre";
+  const name = rawName.trim();
+  const lower = name.toLowerCase();
+
+  const raw: any = s?.raw || {};
+  const tags: any = raw.tags || {};
+  const kind = String(raw.kind || raw.properties?.kind || s?.type || "").toLowerCase();
+  const featureType = String(raw.type || raw.featureType || "").toLowerCase();
+
+  // Helpers
+  const withPrefix = (prefix: string) =>
+    name.toLowerCase().startsWith(prefix.toLowerCase())
+      ? name
+      : `${prefix} ${name}`;
+
+  // --- Hidrografía: ríos / quebradas ---
+  if (
+    lower.startsWith("quebrada ") ||
+    tags.waterway === "stream" ||
+    /quebrada/.test(kind)
+  ) {
+    return withPrefix("Quebrada");
+  }
+
+  if (
+    lower.startsWith("rio ") ||
+    lower.startsWith("río ") ||
+    tags.waterway === "river"
+  ) {
+    return withPrefix("Río");
+  }
+
+  // --- Fallas geológicas ---
+  if (
+    /falla/.test(lower) ||
+    /fault/.test(kind) ||
+    /falla/.test(featureType)
+  ) {
+    return withPrefix("Falla");
+  }
+
+  // --- Minas / canteras ---
+  if (
+    /mina/.test(lower) ||
+    kind === "mine" ||
+    tags.landuse === "quarry" ||
+    kind === "quarry"
+  ) {
+    // no diferenciamos mucho aquí, pero dejamos claro que es explotación
+    return withPrefix("Mina/Cantera");
+  }
+
+  // --- Concesiones ---
+  if (/concesion/.test(lower) || /concesión/.test(lower)) {
+    return withPrefix("Concesión");
+  }
+
+  // --- Yacimientos / proyectos / prospectos (si ya vienen claros, los dejamos) ---
+  if (
+    /yacimiento/.test(lower) ||
+    /prospecto/.test(lower) ||
+    /proyecto/.test(lower) ||
+    /operaci[oó]n/.test(lower)
+  ) {
+    return name;
+  }
+
+  // Si el provider trae un tipo interesante, podemos usarlo como prefijo genérico
+  if (kind && !["", "point"].includes(kind)) {
+    return withPrefix(kind[0].toUpperCase() + kind.slice(1));
+  }
+
+  // Fallback: se deja tal cual
+  return name;
+}
 
 /* =========================================================================
    PDF GENERAL
@@ -569,38 +647,46 @@ export async function buildReportPdf(opts: BuildReportOptions) {
 
     // Preparar cuerpo de la tabla
     const nearby = Array.isArray(nearbySources) ? nearbySources : [];
-    const body = nearby.map((s: any) => {
-      const name = s.name || s.address || "Sin nombre";
-      const type = s.raw?.tags ? Object.values(s.raw.tags).join(", ") : s.type || "";
-      const comm = Array.isArray(s.commodity)
-        ? s.commodity.slice(0, 3).join(", ")
-        : s.commodity || "";
-      const distKm =
-        typeof s.distance_m === "number"
-          ? round2(s.distance_m / 1000)
-          : s.distance_km
-          ? round2(s.distance_km)
-          : "";
-      const distStr = distKm === "" ? "" : `${distKm} km`;
-      const lat =
-        typeof s.latitude === "number"
-          ? s.latitude.toFixed(6)
-          : s.lat
-          ? Number(s.lat).toFixed(6)
-          : "";
-      const lon =
-        typeof s.longitude === "number"
-          ? s.longitude.toFixed(6)
-          : s.lon
-          ? Number(s.lon).toFixed(6)
-          : "";
-      const src =
-        s.source || (s.raw && (s.raw.provider || s.raw.source)) || s.source_url || "";
-      const shortSrc =
-        typeof src === "string" && src.length > 48 ? src.slice(0, 45) + "..." : src || "";
+const body = nearby.map((s: any) => {
+  const rawName = s.name || s.address || "Sin nombre";
+  // NUEVO: nombre tipado (Quebrada X, Falla Y, Mina/Cantera Z, Concesión W…)
+  const name = buildTypedName(rawName, s);
 
-      return [name, type, comm, distStr, lat, lon, shortSrc];
-    });
+  const type = s.raw?.tags
+    ? Object.values(s.raw.tags).join(", ")
+    : s.type || "";
+
+  const comm = Array.isArray(s.commodity)
+    ? s.commodity.slice(0, 3).join(", ")
+    : s.commodity || "";
+
+  const distKm =
+    typeof s.distance_m === "number"
+      ? round2(s.distance_m / 1000)
+      : s.distance_km
+      ? round2(s.distance_km)
+      : "";
+  const distStr = distKm === "" ? "" : `${distKm} km`;
+
+  const lat =
+    typeof s.latitude === "number"
+      ? s.latitude.toFixed(6)
+      : s.lat
+      ? Number(s.lat).toFixed(6)
+      : "";
+  const lon =
+    typeof s.longitude === "number"
+      ? s.longitude.toFixed(6)
+      : s.lon
+      ? Number(s.lon).toFixed(6)
+      : "";
+  const src =
+    s.source || (s.raw && (s.raw.provider || s.raw.source)) || s.source_url || "";
+  const shortSrc =
+    typeof src === "string" && src.length > 48 ? src.slice(0, 45) + "..." : src || "";
+
+  return [name, type, comm, distStr, lat, lon, shortSrc];
+});
 
     // Si no hay items, añadimos fila vacía (para que la tabla aparezca con cabeceras)
     if (body.length === 0) {

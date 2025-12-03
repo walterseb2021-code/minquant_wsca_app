@@ -9,13 +9,15 @@ const API_KEY = process.env.GEOAPIFY_KEY;
  * (Seleccionadas de la lista oficial de categorías soportadas)
  */
 const VALID_MINING_CATEGORIES = [
-  "landuse.quarry",
-  "production.factory",
-  "man_made.watermill",
-  "man_made.windmill",
+  // Rasgos naturales rocosos / geológicos
   "natural.mountain.rock",
-  "natural.mountain.cave_entrance"
+  "natural.mountain.cave_entrance",
+
+  // Áreas industriales que a veces representan plantas / operaciones
+  "building.industrial",
+  "production.factory",
 ];
+
 
 /**
  * getNearbyFromGeoapify
@@ -47,11 +49,18 @@ export async function getNearbyFromGeoapify(
 
     console.log("Geoapify URL:", url.replace(API_KEY, "GEOAPIFY_KEY_REMOVED"));
 
-    const res = await fetch(url);
+       const res = await fetch(url);
     if (!res.ok) {
-      const body = await res.text().catch(() => "No body");
-      throw new Error(`Geoapify responded ${res.status}: ${body}`);
+      let msg = `Geoapify responded ${res.status}`;
+      try {
+        const body = await res.json();
+        if (body?.message) msg += `: ${body.message}`;
+      } catch {
+        // ignoramos parseos fallidos
+      }
+      throw new Error(msg);
     }
+
 
     const json = await res.json();
 

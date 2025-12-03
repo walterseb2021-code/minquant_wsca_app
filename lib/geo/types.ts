@@ -30,3 +30,19 @@ export interface GeoProvider {
   /** Construye el contexto geológico normalizado para lat/lng */
   fetchContext(args: { lat: number; lng: number }): Promise<GeoContext>;
 }
+// === Yacimientos / canteras cercanas, usados en Nearby, PDF y UI ===
+export type GeoSourceItem = {
+  id?: string;
+  name: string;
+  /** Ej.: "Yacimiento aurífero", "Proyecto cuprífero", "Cantera no metálica" */
+  type?: string;
+  /** Puede venir como string o como array desde distintos proveedores */
+  commodity?: string[] | string;
+  latitude: number;
+  longitude: number;
+  distance_m?: number;
+  source?: string;
+  source_url?: string;
+  raw?: any;
+};
+

@@ -12,8 +12,8 @@ type Layer = {
 };
 
 type CountryCatalog = {
-  code: string;   // "PE"
-  name: string;   // "Perú"
+  code: string; // "PE"
+  name: string; // "Perú"
   layers: Layer[];
   notes?: string[];
 };
@@ -45,24 +45,30 @@ export default function GeoSourcesPanel() {
   const [catalog, setCatalog] = React.useState<CatalogJSON | null>(null);
   const [countryCode, setCountryCode] = React.useState<string>("");
 
-  // Cargar catálogo desde /public
+  // Cargar catálogo desde /public/geo-sources.json
   React.useEffect(() => {
     (async () => {
       try {
         setLoading(true);
         setError(null);
+
         const resp = await fetch("/geo-sources.json", { cache: "no-store" });
-        if (!resp.ok) throw new Error("No se pudo leer public/geo-sources.json");
+        if (!resp.ok) {
+          throw new Error("No se pudo leer public/geo-sources.json");
+        }
+
         const json = (await resp.json()) as CatalogJSON;
 
-        // normalizar estructura defensiva
-        if (!Array.isArray(json.countries)) throw new Error("Formato inválido en geo-sources.json");
+        // Normalizar estructura defensiva
+        if (!Array.isArray(json.countries)) {
+          throw new Error("Formato inválido en geo-sources.json");
+        }
 
         setCatalog(json);
 
-        // seleccionar Perú por defecto si existe; si no, el primero
+        // Seleccionar Perú por defecto si existe; si no, el primero
         const hasPE = json.countries.find((c) => c.code === "PE");
-        setCountryCode(hasPE ? "PE" : (json.countries[0]?.code ?? ""));
+        setCountryCode(hasPE ? "PE" : json.countries[0]?.code ?? "");
       } catch (e: any) {
         setError(e?.message || "Error cargando catálogo geoespacial");
       } finally {
@@ -81,27 +87,35 @@ export default function GeoSourcesPanel() {
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">Fuentes geoespaciales</h3>
         {catalog?.updatedAt && (
-          <span className="text-xs text-gray-500">Catálogo: {catalog.updatedAt}</span>
+          <span className="text-xs text-gray-500">
+            Catálogo: {catalog.updatedAt}
+          </span>
         )}
       </div>
 
-      {/* Estados de carga/errores */}
-      {loading && <p className="text-sm text-gray-600 mt-2">Cargando catálogo…</p>}
+      {/* Estados de carga / errores */}
+      {loading && (
+        <p className="text-sm text-gray-600 mt-2">Cargando catálogo…</p>
+      )}
+
       {error && (
         <p className="text-sm text-red-600 mt-2">
-          {error}. Verifica que <code>public/geo-sources.json</code> exista en producción.
+          {error}. Verifica que <code>public/geo-sources.json</code> exista en
+          producción.
         </p>
       )}
 
-      {/* Selector de país */}
+      {/* Contenido principal */}
       {!loading && !error && catalog && (
         <>
+          {/* Selector de país */}
           <div className="mt-3">
             <label className="text-sm text-gray-700">País</label>
             <select
               value={countryCode}
               onChange={(e) => setCountryCode(e.target.value)}
-              className="mt-1 border rounded px-3 py-2">
+              className="mt-1 border rounded px-3 py-2"
+            >
               {catalog.countries.map((c, idx) => (
                 // key robusto: code + índice
                 <option key={`${c.code}-${idx}`} value={c.code}>
@@ -132,25 +146,32 @@ export default function GeoSourcesPanel() {
                     <li key={key} className="border rounded p-2">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div style={{ minWidth: 0 }}>
-                          <div className="font-medium text-sm">{ly.title}</div>
+                          <div className="font-medium text-sm">
+                            {ly.title}
+                          </div>
                           <div className="text-[11px] text-gray-500 break-words">
-                            {ly.service} • <code className="break-all">{ly.url}</code>
+                            {ly.service} •{" "}
+                            <code className="break-all">{ly.url}</code>
                           </div>
                           {ly.notes && (
-                            <div className="text-[11px] text-gray-600 mt-1">{ly.notes}</div>
+                            <div className="text-[11px] text-gray-600 mt-1">
+                              {ly.notes}
+                            </div>
                           )}
                         </div>
                         <div className="flex gap-2 shrink-0">
                           <button
                             onClick={() => copy(ly.url)}
-                            className="px-2 py-1 bg-blue-600 text-white rounded text-xs">
+                            className="px-2 py-1 bg-blue-600 text-white rounded text-xs"
+                          >
                             Copiar URL
                           </button>
                           <a
                             href={ly.url}
                             target="_blank"
                             rel="noreferrer"
-                            className="px-2 py-1 bg-gray-200 rounded text-xs">
+                            className="px-2 py-1 bg-gray-200 rounded text-xs"
+                          >
                             Abrir
                           </a>
                         </div>
@@ -160,7 +181,9 @@ export default function GeoSourcesPanel() {
                 })}
               </ul>
             ) : (
-              <p className="text-sm text-gray-500">No hay capas registradas para este país.</p>
+              <p className="text-sm text-gray-500">
+                No hay capas registradas para este país.
+              </p>
             )}
           </div>
         </>
