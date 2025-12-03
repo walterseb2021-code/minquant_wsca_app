@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 
 const DEFAULT_LAT = -9.1183;
@@ -29,7 +29,6 @@ function buildViewerUrl(
       const base = "https://geocatmin.ingemmet.gob.pe/geocatmin/main";
       return `${base}?center=${centerStr}&level=11`;
     }
-    // si no es Perú, caemos a OSM
     return `https://www.openstreetmap.org/?mlat=${safeLat.toFixed(
       5
     )}&mlon=${safeLng.toFixed(5)}#map=11/${safeLat.toFixed(
@@ -45,14 +44,15 @@ function buildViewerUrl(
     )}/${safeLng.toFixed(5)}`;
   }
 
-  // mode === "earth"
-  // Vista satélite / 3D aproximada
   const latStr = safeLat.toFixed(6);
   const lngStr = safeLng.toFixed(6);
   return `https://earth.google.com/web/@${latStr},${lngStr},5000a,0d,0h,0t,0r`;
 }
 
-export default function GeoVisorPage() {
+/* ===========================================================
+   COMPONENTE HIJO: aquí sí usamos useSearchParams
+=========================================================== */
+function GeoVisorInner() {
   const params = useSearchParams();
 
   const lat = parseNumber(params.get("lat"), DEFAULT_LAT);
@@ -67,9 +67,7 @@ export default function GeoVisorPage() {
   );
 
   const handleOpenNewTab = () => {
-    if (typeof window !== "undefined") {
-      window.open(iframeSrc, "_blank", "noopener,noreferrer");
-    }
+    window.open(iframeSrc, "_blank", "noopener,noreferrer");
   };
 
   return (
@@ -86,7 +84,6 @@ export default function GeoVisorPage() {
               </div>
             </div>
 
-            {/* Controles de modo */}
             <div className="flex flex-wrap items-center gap-2">
               <label className="text-[11px] sm:text-xs">
                 Modo de visor:
@@ -113,17 +110,14 @@ export default function GeoVisorPage() {
           </div>
 
           <div className="text-[10px] sm:text-[11px] text-emerald-100">
-            Las capas y datos cartográficos que se visualizan a continuación
-            pertenecen al geoportal oficial (INGEMMET / GEOCATMIN, OSM, Google
-            Earth u otros). MinQuant_WSCA solo embebe/redirige estos visores
-            para fines de consulta preliminar, respetando sus términos de uso.
+            Las capas embebidas pertenecen a INGEMMET / GEOCATMIN, OpenStreetMap y Google Earth.
           </div>
         </div>
       </header>
 
       <div className="flex-1">
         <iframe
-          key={mode} // fuerza recarga al cambiar modo
+          key={mode}
           src={iframeSrc}
           className="w-full h-full border-0"
           loading="lazy"
@@ -132,5 +126,22 @@ export default function GeoVisorPage() {
         />
       </div>
     </div>
+  );
+}
+
+/* ===========================================================
+   COMPONENTE PRINCIPAL: aquí va <Suspense>
+=========================================================== */
+export default function GeoVisorPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="w-screen h-screen flex items-center justify-center bg-slate-900 text-slate-100">
+          Cargando visor geológico…
+        </div>
+      }
+    >
+      <GeoVisorInner />
+    </Suspense>
   );
 }
