@@ -17,6 +17,8 @@ import {
 
 import { buildReportPdfPlus } from "../../lib/pdf_plus";
 import { suggestFromMinerals } from "../../lib/minerals";
+import LogoutButton from "@/components/LogoutButton";
+
 
 /* ===================== Helpers ===================== */
 async function fileToDataURL(file: File): Promise<string> {
@@ -882,23 +884,28 @@ React.useEffect(() => {
 
   return (
     <main className="min-h-screen">
-      <header className="w-full py-3 px-5 bg-gradient-to-r from-cyan-600 to-emerald-600 text-white">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <h1 className="text-lg font-semibold">Cámara • Ubicación • Análisis</h1>
+<header className="w-full py-3 px-5 bg-gradient-to-r from-cyan-600 to-emerald-600 text-white">
+  <div className="max-w-6xl mx-auto flex items-center justify-between">
+    <h1 className="text-lg font-semibold">Cámara • Ubicación • Análisis</h1>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleNewAnalysis}
-              className="px-3 py-1 rounded bg-white/20 hover:bg-white/30"
-            >
-              Nuevo Análisis
-            </button>
-            <Link href="/" className="px-3 py-1 rounded bg-white/20 hover:bg-white/30">
-              Inicio
-            </Link>
-          </div>
-        </div>
-      </header>
+    <div className="flex items-center gap-2">
+      <button
+        onClick={handleNewAnalysis}
+        className="px-3 py-1 rounded bg-white/20 hover:bg-white/30"
+      >
+        Nuevo Análisis
+      </button>
+
+      <Link href="/" className="px-3 py-1 rounded bg-white/20 hover:bg-white/30">
+        Inicio
+      </Link>
+
+      {/* ⭐ BOTÓN DE CERRAR SESIÓN */}
+      <LogoutButton />
+    </div>
+  </div>
+</header>
+
 
       <section className="max-w-6xl mx-auto px-5 py-5 grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* IZQUIERDA */}
