@@ -359,12 +359,20 @@ function buildInterpretationClient(
   };
 }
 
+type GeologyContext = {
+  unit?: string;
+  lithology?: string;
+  age?: string;
+  code?: string;
+  source?: string;
+};
 
 /* ===================== COMPONENTE PRINCIPAL ===================== */
 export default function AnalisisPage() {
   const [photos, setPhotos] = React.useState<CapturedPhoto[]>([]);
   const [imagesDataURL, setImagesDataURL] = React.useState<string[]>([]);
   const [geo, setGeo] = React.useState<GeoResult | null>(null);
+  const [geologyContext, setGeologyContext] = React.useState<GeologyContext | null>(null);
 
   /* Sesión */
   const [sessionCounter, setSessionCounter] = React.useState(1);
@@ -528,6 +536,32 @@ React.useEffect(() => {
 
   runInterpretation();
 }, [globalResults, perImage, nearbyItems, nearbySelected, geo, sampleCode]);
+// ===================== CONTEXTO GEOLÓGICO (unidad + litología) =====================
+React.useEffect(() => {
+  const lat = geo?.point?.lat;
+  const lng = geo?.point?.lng;
+
+  if (typeof lat !== "number" || typeof lng !== "number") {
+    setGeologyContext(null);
+    return;
+  }
+
+  (async () => {
+    try {
+      const res = await fetch(`/api/geounit?lat=${lat}&lng=${lng}`);
+      if (!res.ok) {
+        console.warn("Sin datos geológicos");
+        setGeologyContext(null);
+        return;
+      }
+      const data = await res.json();
+      setGeologyContext(data.geology || null);
+    } catch (err) {
+      console.error("Error obteniendo geología:", err);
+      setGeologyContext(null);
+    }
+  })();
+}, [geo]);
 
 
   /* Handlers */
@@ -785,6 +819,7 @@ const opts = {
 
   // 🔥 CLAVE: enviar la interpretación dinámica al PDF
   interpretation: interpreted || interpretation || null,
+    geologyContext,
 };
 
 

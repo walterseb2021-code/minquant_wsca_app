@@ -6,10 +6,8 @@ import { NextRequest, NextResponse } from "next/server";
  * - País (código y nombre)
  * - Fuente principal de información geológica (ej. INGEMMET/GEOCATMIN para Perú)
  * - Portal oficial de consulta
- * - Estructura preparada para integrar WMS/WFS (geología, yacimientos, etc.)
- *
- * Más adelante:
- * - Se conectará con servicios WMS/WFS reales para poblar geology/nearbyDeposits.
+ * - Geología local (unidad, litología, edad, código) vía ArcGIS REST /identify
+ * - Yacimientos cercanos vía /api/nearby (si countryCode = PE)
  */
 
 type SourceInfo = {
@@ -112,17 +110,31 @@ export async function GET(req: NextRequest) {
       const nearbyRes = await fetch(nearbyUrl, { cache: "no-store" });
 
       if (nearbyRes.ok) {
-        const nearbyJson = await nearbyRes.json();
+        const contentType = nearbyRes.headers.get("content-type") || "";
 
-        if (Array.isArray(nearbyJson?.items)) {
-          nearbyDeposits = nearbyJson.items.map((item: any) => ({
-            name: item.name,
-            commodity: item.commodity,
-            source: item.source,
-            distance_km: item.distance_m
-              ? Math.round(item.distance_m / 1000)
-              : undefined,
-          }));
+        // Solo intentamos parsear JSON si realmente es JSON
+        if (contentType.includes("application/json")) {
+          try {
+            const nearbyJson = await nearbyRes.json();
+
+            if (Array.isArray(nearbyJson?.items)) {
+              nearbyDeposits = nearbyJson.items.map((item: any) => ({
+                name: item.name,
+                commodity: item.commodity,
+                source: item.source,
+                distance_km: item.distance_m
+                  ? Math.round(item.distance_m / 1000)
+                  : undefined,
+              }));
+            }
+          } catch (err) {
+            console.warn("Error parseando JSON de /api/nearby:", err);
+          }
+        } else {
+          // Esto pasa cuando el middleware redirige a /login y devuelve HTML
+          console.warn(
+            "Respuesta no JSON desde /api/nearby (probable login o HTML). Se omiten yacimientos."
+          );
         }
       }
     } catch (e) {
@@ -131,7 +143,112 @@ export async function GET(req: NextRequest) {
   }
 
   // ==============================
-  // 4) Respuesta final estructurada
+  // 3.1) Obtener UNIDAD GEOLÓGICA REAL (ArcGIS REST /identify)
+  // ==============================
+  let geologyContext: null | {
+    unit?: string;
+    lithology?: string;
+    age?: string;
+    code?: string;
+    source: string;
+  } = null;
+
+  if (countryCode === "PE") {
+    try {
+      // Endpoint oficial ArcGIS REST
+      const identifyUrl = new URL(
+        "https://geocatmin.ingemmet.gob.pe/arcgis/rest/services/SERV_GEOLOGIA/MapServer/identify"
+      );
+
+      // Parámetros básicos para Identify
+      identifyUrl.searchParams.set("f", "json");
+      // geometry = x,y = lon,lat en SR 4326
+      identifyUrl.searchParams.set("geometry", `${lng},${lat}`);
+      identifyUrl.searchParams.set("geometryType", "esriGeometryPoint");
+      identifyUrl.searchParams.set("sr", "4326");
+
+      // Probar con TODAS las capas visibles
+      identifyUrl.searchParams.set("layers", "all");
+
+      // Más tolerancia en píxeles para “atrapar” el polígono cercano
+      identifyUrl.searchParams.set("tolerance", "12");
+
+      // Extensión de mapa “amplia” alrededor del punto
+      const dx = 0.5;
+      const dy = 0.5;
+      identifyUrl.searchParams.set(
+        "mapExtent",
+        `${lng - dx},${lat - dy},${lng + dx},${lat + dy}`
+      );
+
+      // Resolución de la "imagen" usada para el cálculo de tolerancia
+      identifyUrl.searchParams.set("imageDisplay", "1024,768,96");
+
+      const identifyRes = await fetch(identifyUrl.toString(), {
+        cache: "no-store",
+      });
+
+      if (identifyRes.ok) {
+        const data = await identifyRes.json();
+
+        // Log para depuración
+        console.log("GEOCONTEXT IDENTIFY RAW:", JSON.stringify(data));
+
+        // Si el servicio devuelve error (como "Service ... not started"), lo registramos y salimos
+        const anyData = data as any;
+        if (anyData?.error) {
+          console.warn("Identify geológico devolvió error:", anyData.error);
+        } else {
+          const first =
+            anyData?.results?.[0] ||
+            (Array.isArray(anyData?.results) && anyData.results[0]) ||
+            null;
+
+          const attrs = first?.attributes || {};
+
+          geologyContext = {
+            // Intentamos mapear a campos típicos; si no existen, caerán en null
+            unit:
+              attrs.NOMUNIDAD ||
+              attrs.UNIDAD ||
+              attrs.UNID_LITO ||
+              attrs.NOMBRE ||
+              null,
+            lithology:
+              attrs.LITOLOGIA ||
+              attrs.LITO ||
+              attrs.DESCRIPCION ||
+              attrs.DESC_LITO ||
+              null,
+            age: attrs.EDAD || attrs.ERA || attrs.PERIODO || null,
+            code: attrs.COD_UNID || attrs.CODIGO || attrs.CODIGO_UNID || null,
+            source: "INGEMMET – Geología 1:100 000 (ArcGIS REST identify)",
+          };
+
+          // Si no se obtuvo nada relevante, lo dejamos en null
+          if (
+            !geologyContext.unit &&
+            !geologyContext.lithology &&
+            !geologyContext.age &&
+            !geologyContext.code
+          ) {
+            geologyContext = null;
+          }
+        }
+      } else {
+        console.warn(
+          "Identify geológico no OK:",
+          identifyRes.status,
+          identifyRes.statusText
+        );
+      }
+    } catch (e) {
+      console.warn("Error consultando ArcGIS REST /identify:", e);
+    }
+  }
+
+  // ==============================
+  // 4) Respuesta final estructurada (CON GEOLOGÍA REAL)
   // ==============================
   return NextResponse.json({
     status: "ok",
@@ -141,14 +258,7 @@ export async function GET(req: NextRequest) {
     source: sourceInfo.source,
     portal: sourceInfo.portal,
 
-    geology: null as
-      | {
-          unitName?: string;
-          age?: string;
-          lithology?: string;
-          raw?: any;
-        }
-      | null,
+    geologyContext, // ← puede venir con datos reales o null (si servicio caído)
 
     nearbyDeposits,
 

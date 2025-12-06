@@ -269,6 +269,15 @@ export type BuildReportOptions = {
     dataUrl: string; // data:image/...;base64,.....
   }[];
 
+  /** NUEVO: contexto geológico del punto (INGEMMET) */
+  geologyContext?: {
+    unit?: string;       // Unidad geológica, p.ej. "Formación Chimú"
+    lithology?: string;  // Litología, p.ej. "Cuarcitas y lutitas"
+    age?: string;        // Edad, p.ej. "Cretácico Inferior"
+    code?: string;       // Código, p.ej. "KICh"
+    source?: string;     // Fuente, p.ej. "INGEMMET – Mapa geológico 1:100 000"
+  } | null;
+
   interpretation?: {
     geology?: string;
     economics?: string;
@@ -1162,6 +1171,42 @@ if (!byImage.length) {
   });
 
   y = (doc as any).lastAutoTable.finalY + 20;
+    // ================= CONTEXTO GEOLÓGICO DEL PUNTO =================
+const geoCtx = opts?.geologyContext;
+
+if (geoCtx && (geoCtx.unit || geoCtx.lithology || geoCtx.age || geoCtx.code || geoCtx.source)) {
+  if (y + 90 > pageH - margin) {
+    doc.addPage();
+    y = margin;
+  }
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.text("Contexto geológico del punto", margin, y);
+  y += 14;
+
+  const rows: string[][] = [
+    ["Unidad geológica", geoCtx.unit || "—"],
+    ["Litología", geoCtx.lithology || "—"],
+  ];
+
+  if (geoCtx.age)   rows.push(["Edad geológica", geoCtx.age]);
+  if (geoCtx.code)  rows.push(["Código de unidad", geoCtx.code]);
+  if (geoCtx.source) rows.push(["Fuente", geoCtx.source]);
+
+  autoTable(doc, {
+    startY: y + 4,
+    margin: { left: margin, right: margin },
+    head: [["Atributo", "Valor"]],
+    body: rows,
+    styles: { fontSize: 9, cellPadding: 3, textColor: cellText },
+    headStyles: { fillColor: headFill, textColor: headText },
+    theme: "grid",
+  });
+
+  y = (doc as any).lastAutoTable.finalY + 20;
+}
+
 
   // ================= YACIMIENTOS / CANTERAS CERCANAS =================
   {
