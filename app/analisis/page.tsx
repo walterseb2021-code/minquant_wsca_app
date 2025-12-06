@@ -764,23 +764,29 @@ React.useEffect(() => {
     const selectedOrAll =
       nearbySelected.length > 0 ? nearbySelected : nearbyItems;
 
-    // ============================================================
-    // 4) ARMAR OPCIONES PARA EL PDF GENERAL
-    // ============================================================
-    const opts = {
-      title: `Reporte ${sampleCode}`,
-      note: "Informe generado automáticamente por MinQuant_WSCA.",
-      lat: geo?.point?.lat,
-      lng: geo?.point?.lng,
-      dateISO: new Date().toISOString(),
-      econ,
-      nearbySources: selectedOrAll,
-      processAdj,
-      images: imagesDataURL,
+ // ============================================================
+// 4) ARMAR OPCIONES PARA EL PDF GENERAL
+// ============================================================
+const opts = {
+  title: `Reporte ${sampleCode}`,
+  note: "Informe generado automáticamente por MinQuant_WSCA.",
+  lat: geo?.point?.lat,
+  lng: geo?.point?.lng,
+  dateISO: new Date().toISOString(),
+  econ,
+  nearbySources: selectedOrAll,
+  processAdj,
 
-      // 🔥 CLAVE: enviar la interpretación dinámica al PDF
-      interpretation: interpreted || interpretation || null,
-    };
+  // 👇 Lista de imágenes con etiqueta y dataUrl
+  images: imagesDataURL.map((dataUrl, idx) => ({
+    label: photos[idx]?.file?.name || `Imagen ${idx + 1}`,
+    dataUrl,
+  })),
+
+  // 🔥 CLAVE: enviar la interpretación dinámica al PDF
+  interpretation: interpreted || interpretation || null,
+};
+
 
     // ============================================================
     // 5) GENERAR PDF GENERAL
@@ -905,7 +911,6 @@ React.useEffect(() => {
     </div>
   </div>
 </header>
-
 
       <section className="max-w-6xl mx-auto px-5 py-5 grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* IZQUIERDA */}

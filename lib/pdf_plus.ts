@@ -262,6 +262,18 @@ export type BuildReportOptions = {
   dateISO?: string;
   econ?: EconOverrides;
   nearbySources?: Array<any>;
+
+  /** NUEVO: galería de imágenes originales usadas en el análisis */
+  images?: {
+    label: string;   // Ej: "Imagen 1", "Foto campo 1", etc.
+    dataUrl: string; // data:image/...;base64,.....
+  }[];
+
+  interpretation?: {
+    geology?: string;
+    economics?: string;
+    caveats?: string;
+  } | null;
 };
 
 /** Utilidades */
@@ -993,37 +1005,113 @@ export async function buildReportPdfPlus(args: {
     y += 14 * interLines.length + 20;
   }
 
-  // ================= RESULTADOS POR IMAGEN =================
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(12);
-  doc.text("Resultados por imagen", margin, y);
-  y += 10;
+ // ================= RESULTADOS POR IMAGEN (CON MINIATURA + TABLA) =================
+doc.setFont("helvetica", "bold");
+doc.setFontSize(12);
+doc.text("Resultados por imagen", margin, y);
+y += 16;
 
-  autoTable(doc, {
-    startY: y + 6,
-    head: [["Imagen", "Top minerales (%)", "Exclusiones"]],
-    body: byImage.map((img, idx) => {
-      const topMinerals = img.minerals
-        .slice(0, 3)
-        .map((m) => {
-          const label = normalizeMineralName(m.name);
-          return `${label} (${m.pct.toFixed(2)}%)`;
-        })
-        .join(", ");
+// Miniaturas que vienen desde la app
+const thumbImages = opts?.images || [];
 
-      return [
-        img.filename || `Imagen ${idx + 1}`,
-        topMinerals,
-        img.excluded?.reason || "",
-      ];
-    }),
-    styles: { fontSize: 9, cellPadding: 4, textColor: cellText },
-    headStyles: { fillColor: headFill, textColor: headText },
-    margin: { left: margin, right: margin },
-    theme: "grid",
-  });
+// Si no hay imágenes en opts, caemos a un mensaje simple
+if (!byImage.length) {
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.text(
+    "No se registraron resultados por imagen en este análisis.",
+    margin,
+    y
+  );
+  y += 20;
+} else {
+  for (let i = 0; i < byImage.length; i++) {
+    const imgRes = byImage[i];
+    const thumb = thumbImages[i]; // asumimos mismo orden que en la app
 
-  y = (doc as any).lastAutoTable.finalY + 14;
+    // Si no hay espacio suficiente, nueva página
+    if (y + 120 > pageH - margin) {
+      doc.addPage();
+      y = margin;
+    }
+
+    // ----- TÍTULO DE LA IMAGEN -----
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    const labelBase =
+      imgRes.filename || thumb?.label || `Imagen ${i + 1}`;
+    doc.text(`Imagen ${i + 1}: ${labelBase}`, margin, y);
+    y += 10;
+
+    // ----- MINIATURA (SI EXISTE) -----
+    let blockTopY = y;
+    const thumbW = 80;
+    const thumbH = 80;
+
+    try {
+      if (thumb?.dataUrl) {
+        doc.addImage(
+          thumb.dataUrl,
+          "JPEG",
+          margin,
+          blockTopY,
+          thumbW,
+          thumbH
+        );
+      } else {
+        doc.setFont("helvetica", "italic");
+        doc.setFontSize(9);
+        doc.text("Imagen no disponible en este PDF.", margin, blockTopY + 12);
+      }
+    } catch (err) {
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(9);
+      doc.text("Error al cargar imagen.", margin, blockTopY + 12);
+    }
+
+    // ----- TABLA DE MINERALES A LA DERECHA -----
+    const tableStartY = blockTopY;
+    const tableLeft = margin + thumbW + 10;
+
+    const topMinerals = (imgRes.minerals || []).map((m) => [
+      normalizeMineralName(m.name),
+      `${m.pct.toFixed(2)} %`,
+    ]);
+
+    autoTable(doc, {
+      startY: tableStartY,
+      margin: { left: tableLeft, right: margin },
+      head: [["Mineral detectado", "%"]],
+      body: topMinerals,
+      styles: { fontSize: 9, cellPadding: 3, textColor: cellText },
+      headStyles: { fillColor: headFill, textColor: headText },
+      theme: "grid",
+      tableWidth: pageW - tableLeft - margin,
+    });
+
+    const tableEndY = (doc as any).lastAutoTable?.finalY || (tableStartY + 10);
+
+    // Ajustamos Y debajo de la miniatura y la tabla
+    y = Math.max(blockTopY + thumbH, tableEndY) + 12;
+
+    // ----- RAZONES DE EXCLUSIÓN (si existen) -----
+    if (imgRes.excluded?.reason) {
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(9);
+      const noteLines = doc.splitTextToSize(
+        `Nota: ${sanitizeText(imgRes.excluded.reason)}`,
+        pageW - margin * 2
+      );
+      doc.text(noteLines, margin, y);
+      y += noteLines.length * 12 + 8;
+    }
+
+    // Separador entre imágenes
+    doc.setDrawColor(200);
+    doc.line(margin, y, pageW - margin, y);
+    y += 12;
+  }
+}
 
   // ================= ESTIMACIÓN ECONÓMICA =================
   doc.setFont("helvetica", "bold");
@@ -1128,6 +1216,82 @@ export async function buildReportPdfPlus(args: {
 
     y = (doc as any).lastAutoTable.finalY + 18;
   }
+    // ================= GALERÍA DE IMÁGENES (MUESTRAS ORIGINALES) =================
+  if (opts?.images && Array.isArray(opts.images) && opts.images.length > 0) {
+    doc.addPage();
+    let gy = margin;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.text("Galería de imágenes de la muestra", margin, gy);
+    gy += 16;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    const intro = doc.splitTextToSize(
+      "A continuación se muestran miniaturas de las fotografías empleadas en el análisis. " +
+        "Estas imágenes corresponden a la muestra mineral capturada en campo o subida desde galería.",
+      pageW - margin * 2
+    );
+    doc.text(intro, margin, gy);
+    gy += intro.length * 12 + 10;
+
+    const imgW = 160;  // ancho de cada miniatura
+    const imgH = 120;  // alto de cada miniatura
+    const gapX = 20;
+    const gapY = 40;
+
+    // coordenadas iniciales
+    let x = margin;
+    let rowStartY = gy;
+
+    for (let i = 0; i < opts.images.length; i++) {
+      const item = opts.images[i];
+      const dataUrl = item.dataUrl;
+
+      // Si no cabe en la página, pasamos a una nueva
+      if (gy + imgH + 40 > pageH - margin) {
+        doc.addPage();
+        gy = margin;
+        x = margin;
+        rowStartY = gy;
+      }
+
+      // Determinar formato a partir del dataURL
+      let fmt: "PNG" | "JPEG" = "JPEG";
+      if (typeof dataUrl === "string" && dataUrl.startsWith("data:image/png")) {
+        fmt = "PNG";
+      }
+
+      try {
+        doc.addImage(dataUrl, fmt, x, gy, imgW, imgH);
+      } catch {
+        // Si falla, ponemos un recuadro de error
+        doc.setDrawColor(180);
+        doc.rect(x, gy, imgW, imgH);
+        doc.setFontSize(8);
+        doc.text("Imagen no disponible", x + 8, gy + imgH / 2);
+      }
+
+      // Etiqueta debajo de la imagen
+      doc.setFontSize(9);
+      doc.text(item.label || `Imagen ${i + 1}`, x, gy + imgH + 12);
+
+      // Siguiente columna
+      x += imgW + gapX;
+
+      // Si se sale de margen derecho, nueva fila
+      if (x + imgW > pageW - margin) {
+        x = margin;
+        gy = rowStartY + imgH + gapY;
+        rowStartY = gy;
+      }
+    }
+
+    // Actualizamos y por si luego se quisiera continuar
+    y = gy + imgH + 30;
+  }
+
 // ================= CONCLUSIONES Y RECOMENDACIONES (OPTIMIZADO v2) =================
 try {
 
