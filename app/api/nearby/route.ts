@@ -1,4 +1,4 @@
-// app/api/nearby/route.ts
+// app/api/nearby/route.ts 
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -263,6 +263,40 @@ function normalizeFalla(f: any, lat: number, lon: number) {
 }
 
 /* ===============================================================
+   5.5. DEDUPLICACIÓN INTELIGENTE
+   (nombre + tipo + conjunto de commodities)
+   =============================================================== */
+function dedupeNearby(items: any[]) {
+  const seen = new Set<string>();
+  const cleaned: any[] = [];
+
+  for (const it of items) {
+    const nameKey = clean(it.name).toUpperCase();
+    const typeKey = clean(it.type).toUpperCase();
+
+    let commKey = "";
+    if (Array.isArray(it.commodity)) {
+      const arr = it.commodity
+        .map((c: any) => clean(c).toUpperCase())
+        .filter(Boolean)
+        .sort();
+      commKey = arr.join("|");
+    } else {
+      commKey = clean(it.commodity).toUpperCase();
+    }
+
+    const key = `${nameKey}||${typeKey}||${commKey}`;
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      cleaned.push(it);
+    }
+  }
+
+  return cleaned;
+}
+
+/* ===============================================================
    6. HANDLER PRINCIPAL
    =============================================================== */
 export async function GET(req: Request) {
@@ -307,11 +341,13 @@ export async function GET(req: Request) {
     const fallas = fal.map((f) => normalizeFalla(f, lat, lon));
 
     // -----------------------------------------------------------
-    // COMBINAR Y ORDENAR POR DISTANCIA
+    // COMBINAR, DEDUPLICAR Y ORDENAR POR DISTANCIA
     // -----------------------------------------------------------
-    const items = [...concesiones, ...yacims, ...fallas].filter(
+    const combined = [...concesiones, ...yacims, ...fallas].filter(
       (it) => isCoord(it.latitude) && isCoord(it.longitude)
     );
+
+    const items = dedupeNearby(combined);
 
     items.sort(
       (a, b) => (a.distance_m ?? 1e12) - (b.distance_m ?? 1e12)
