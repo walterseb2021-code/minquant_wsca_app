@@ -1,27 +1,25 @@
-// middleware.ts
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { getSessionById } from "./lib/session";
+import { getUserById } from "./lib/users";
+
+const ADMIN_ID = "U000";
+const TRIAL_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Rutas que NO se protegen (libres)
-  if (
-    pathname.startsWith("/login") ||
-    pathname.startsWith("/api/auth")
-  ) {
+  if (pathname.startsWith("/login") || pathname.startsWith("/api/auth")) {
     return NextResponse.next();
   }
 
-  const isAdminRoute = pathname.startsWith("/admin/usuarios");
-
-  // Rutas que SÍ queremos proteger (requieren estar logueado)
-  const protectedPrefixes = [
-    "/",                     // ⬅️ ahora la página de inicio también pide sesión
+  const protectedPaths = [
+    "/",
     "/analisis",
     "/analyzer",
     "/test-pdf",
+    "/admin",
     "/api/analyze",
     "/api/commodity-prices",
     "/api/geocontext",
@@ -30,61 +28,56 @@ export async function middleware(req: NextRequest) {
     "/api/staticmap",
   ];
 
-  const needsAuth = isAdminRoute || protectedPrefixes.some((prefix) => {
-    if (prefix === "/") {
-      // caso especial: la raíz exacta "/"
-      return pathname === "/";
-    }
-    return pathname === prefix || pathname.startsWith(`${prefix}/`);
-  });
+  const needsAuth = protectedPaths.some(p =>
+    pathname === p || pathname.startsWith(`${p}/`)
+  );
 
-  if (!needsAuth) {
-    return NextResponse.next();
+  if (!needsAuth) return NextResponse.next();
+
+  const cookie = req.cookies.get("mq_session");
+  if (!cookie) {
+    const url = new URL("/login", req.url);
+    url.searchParams.set("next", pathname);
+    return NextResponse.redirect(url);
   }
 
-  // Buscamos cookie de sesión
-  const sessionCookie = req.cookies.get("mq_session");
-
-  if (!sessionCookie) {
-    const loginUrl = new URL("/login", req.url);
-    loginUrl.searchParams.set("next", pathname);
-    return NextResponse.redirect(loginUrl);
-  }
-
-  const sessionId = sessionCookie.value;
-
-  // Verificamos sesión en Redis
-  const session = await getSessionById(sessionId);
-
+  const session = await getSessionById(cookie.value);
   if (!session) {
-    const loginUrl = new URL("/login", req.url);
-    loginUrl.searchParams.set("next", pathname);
-    const res = NextResponse.redirect(loginUrl);
+    const res = NextResponse.redirect(new URL("/login", req.url));
     res.cookies.set("mq_session", "", { maxAge: 0, path: "/" });
     return res;
   }
 
-  // Si es ruta admin, solo permitimos al usuario U001 (tú)
-  if (isAdminRoute && session.userId !== "U001") {
+  const user = await getUserById(session.userId);
+  if (!user || !user.active) {
+    const res = NextResponse.redirect(new URL("/login", req.url));
+    res.cookies.set("mq_session", "", { maxAge: 0, path: "/" });
+    return res;
+  }
+
+  if (user.id !== ADMIN_ID) {
+    const expiresAt = user.createdAt + TRIAL_DAYS * DAY_MS;
+    if (Date.now() > expiresAt) {
+      const res = NextResponse.redirect(new URL("/login", req.url));
+      res.cookies.set("mq_session", "", { maxAge: 0, path: "/" });
+      return res;
+    }
+  }
+
+  if (pathname.startsWith("/admin") && user.id !== ADMIN_ID) {
     return NextResponse.redirect(new URL("/analisis", req.url));
   }
 
-  // Todo bien → continuar
   return NextResponse.next();
 }
 
 export const config = {
   matcher: [
-    "/",                     // ⬅️ protegemos la raíz (dashboard)
+    "/",
     "/analisis/:path*",
     "/analyzer/:path*",
     "/test-pdf/:path*",
-    "/admin/:path*",         // panel admin protegido
-    "/api/analyze/:path*",
-    "/api/commodity-prices/:path*",
-    "/api/geocontext/:path*",
-    "/api/mineral-info/:path*",
-    "/api/nearby/:path*",
-    "/api/staticmap/:path*",
+    "/admin/:path*",
+    "/api/:path*",
   ],
 };

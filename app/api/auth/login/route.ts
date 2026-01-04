@@ -1,64 +1,54 @@
-// app/api/auth/login/route.ts
 import { NextResponse } from "next/server";
-import { validateCredentials } from "@/lib/users";
+import { validateCredentials, ensureAdminUser } from "@/lib/users";
 import { createSession } from "@/lib/session";
 
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => null);
-
     if (!body) {
-      return NextResponse.json(
-        { ok: false, error: "Formato de datos inválido." },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "Formato inválido" }, { status: 400 });
     }
 
     const { id, password } = body;
-
     if (!id || !password) {
+      return NextResponse.json({ ok: false, error: "ID y contraseña requeridos" }, { status: 400 });
+    }
+
+    await ensureAdminUser();
+
+    const result = await validateCredentials({
+      id: String(id).trim().toUpperCase(),
+      password: String(password).trim(),
+    });
+
+    if (result === "TRIAL_EXPIRED") {
       return NextResponse.json(
-        { ok: false, error: "id y password son requeridos" },
-        { status: 400 }
+        { ok: false, error: "Tu periodo de prueba ha finalizado." },
+        { status: 403 }
       );
     }
 
-    // Normalizamos el ID (mayúsculas y sin espacios)
-    const normalizedId = String(id).trim().toUpperCase();
-
-    // 1. Validar credenciales contra Redis
-    const user = await validateCredentials({
-      id: normalizedId,
-      password: String(password),
-    });
-
-    if (!user) {
+    if (!result) {
       return NextResponse.json(
-        { ok: false, error: "Credenciales inválidas o usuario inactivo" },
+        { ok: false, error: "ID o contraseña incorrectos." },
         { status: 401 }
       );
     }
 
-    // 2. Crear sesión y guardarla en Redis
-    const session = await createSession(user.id);
+    const session = await createSession(result.id);
 
-    // 3. Responder OK y agregar cookie
-    const res = NextResponse.json({ ok: true, user });
-
+    const res = NextResponse.json({ ok: true, user: result });
     res.cookies.set("mq_session", session.id, {
       httpOnly: true,
       sameSite: "lax",
       secure: process.env.NODE_ENV === "production",
-      maxAge: 60 * 60 * 24 * 7, // 7 días
+      maxAge: 60 * 60 * 24 * 7,
       path: "/",
     });
 
     return res;
   } catch (err) {
-    console.error("Error en /api/auth/login:", err);
-    return NextResponse.json(
-      { ok: false, error: "Error interno al iniciar sesión." },
-      { status: 500 }
-    );
+    console.error("Login error:", err);
+    return NextResponse.json({ ok: false, error: "Error interno" }, { status: 500 });
   }
 }
