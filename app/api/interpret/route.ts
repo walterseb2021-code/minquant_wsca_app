@@ -73,9 +73,7 @@ function buildRuleBasedSummary(payload: {
     .map((m) => `${m.name} (~${(m.pct || 0).toFixed(1)} %)`);
 
   if (topMinerals.length) {
-    geoLines.push(
-      `En la mezcla global destacan: ${topMinerals.join(", ")}.`
-    );
+    geoLines.push(`En la mezcla global destacan: ${topMinerals.join(", ")}.`);
   }
 
   // Firma cuprífera
@@ -201,9 +199,7 @@ function buildRuleBasedSummary(payload: {
 
     if (metalTags.length) {
       econLines.push(
-        `La cartografía de yacimientos cercanos indica presencia de ${Array.from(
-          new Set(metalTags)
-        ).join(
+        `La cartografía de yacimientos cercanos indica presencia de ${Array.from(new Set(metalTags)).join(
           ", "
         )}, lo que refuerza la interpretación de un ambiente metalífero compatible con la mezcla observada en la muestra.`
       );
@@ -212,9 +208,7 @@ function buildRuleBasedSummary(payload: {
 
   // Contexto geológico (geoContext)
   if (geoContext && geoContext.geology) {
-    geoLines.push(
-      `La unidad geológica reportada para la ubicación corresponde a: ${geoContext.geology}.`
-    );
+    geoLines.push(`La unidad geológica reportada para la ubicación corresponde a: ${geoContext.geology}.`);
   }
 
   // Caveats base
@@ -243,7 +237,14 @@ async function callGemini(payload: any, base: any) {
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+
+  // ✅ MODELO POR DEFECTO (y override opcional por .env.local)
+  const preferred = process.env.GEMINI_MODEL_INTERPRET || "gemini-2.5-flash";
+
+  // ✅ Fallbacks por si un modelo no existe / no soporta generateContent / no está habilitado
+  const candidates = Array.from(
+    new Set([preferred, "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"])
+  );
 
   const prompt = `
 Eres un geólogo económico senior con experiencia en exploración de metales base y preciosos.
@@ -280,25 +281,37 @@ ${JSON.stringify(
 )}
 `;
 
-  const result = await model.generateContent({
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-  });
+  for (const modelName of candidates) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName });
 
-  const text = (await result.response.text()) || "";
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) {
-    console.warn("[/api/interpret] Respuesta Gemini sin JSON claro:", text);
-    return null;
+      const result = await model.generateContent({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+      });
+
+      const text = (await result.response.text()) || "";
+      const start = text.indexOf("{");
+      const end = text.lastIndexOf("}");
+      if (start === -1 || end === -1 || end <= start) {
+        console.warn(`[/api/interpret] Respuesta sin JSON claro (modelo=${modelName}):`, text);
+        continue;
+      }
+
+      try {
+        const json = JSON.parse(text.slice(start, end + 1));
+        return json;
+      } catch (e) {
+        console.error(`[/api/interpret] Error parseando JSON (modelo=${modelName}):`, e);
+        continue;
+      }
+    } catch (e) {
+      console.warn(`[/api/interpret] Falló Gemini con modelo=${modelName}. Probando siguiente...`, e);
+      continue;
+    }
   }
 
-  try {
-    const json = JSON.parse(text.slice(start, end + 1));
-    return json;
-  } catch (e) {
-    console.error("[/api/interpret] Error parseando JSON de Gemini:", e);
-    return null;
-  }
+  // Si todos fallan, usa reglas
+  return null;
 }
 
 export async function POST(req: Request) {
@@ -317,20 +330,12 @@ export async function POST(req: Request) {
     const final = {
       geology: ai?.geology || base.geology,
       economics: ai?.economics || base.economics,
-      caveats:
-        (ai?.caveats
-          ? `${ai.caveats} `
-          : "") + (base.caveats || ""),
+      caveats: (ai?.caveats ? `${ai.caveats} ` : "") + (base.caveats || ""),
     };
 
     return NextResponse.json(final);
   } catch (e) {
     console.error("[/api/interpret] Error general:", e);
-    return NextResponse.json(
-      {
-        error: "Error procesando interpretación.",
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Error procesando interpretación." }, { status: 500 });
   }
 }

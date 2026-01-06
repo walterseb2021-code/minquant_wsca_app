@@ -18,7 +18,7 @@ import {
 import { buildReportPdfPlus } from "../../lib/pdf_plus";
 import { suggestFromMinerals } from "../../lib/minerals";
 import LogoutButton from "@/components/LogoutButton";
-
+import AssistantDock from "@/components/assistant/AssistantDock";
 
 /* ===================== Helpers ===================== */
 async function fileToDataURL(file: File): Promise<string> {
@@ -30,7 +30,11 @@ async function fileToDataURL(file: File): Promise<string> {
   });
 }
 
-async function resizeImageFile(file: File, maxWH = 1280, quality = 0.7): Promise<Blob> {
+async function resizeImageFile(
+  file: File,
+  maxWH = 1280,
+  quality = 0.7
+): Promise<Blob> {
   const bitmap = await createImageBitmap(file);
   const { width, height } = bitmap;
   const scale = Math.min(1, maxWH / Math.max(width, height));
@@ -80,10 +84,25 @@ const PRICE_MAP_USD: Record<string, number> = {
 
 /* ======== 20 COMMODITIES ======== */
 type CommodityCode =
-  | "Au" | "Ag" | "Pt" | "Pd"
-  | "Cu" | "Zn" | "Pb" | "Sn" | "Ni" | "Mo"
-  | "Sb" | "Co" | "V" | "Ti" | "W"
-  | "Li" | "Fe" | "Al" | "Mn"
+  | "Au"
+  | "Ag"
+  | "Pt"
+  | "Pd"
+  | "Cu"
+  | "Zn"
+  | "Pb"
+  | "Sn"
+  | "Ni"
+  | "Mo"
+  | "Sb"
+  | "Co"
+  | "V"
+  | "Ti"
+  | "W"
+  | "Li"
+  | "Fe"
+  | "Al"
+  | "Mn"
   | "REE";
 
 type CommodityConfig = {
@@ -125,13 +144,11 @@ const COMMODITY_CONFIG: CommodityConfig[] = [
 ];
 
 const DEFAULT_PRICES: Record<CommodityCode, number> = {
-  // Metales preciosos (USD por gramo)
   Au: 131,
   Ag: 1.67,
   Pt: 32,
   Pd: 30.5,
 
-  // Metales base y otros (USD por kilogramo)
   Cu: 11,
   Zn: 3.25,
   Pb: 2.05,
@@ -206,13 +223,11 @@ const NAME_TO_CODE: Record<string, CommodityCode> = {
 
 // Unidades que se muestran en la UI para el precio
 const COMMODITY_UNITS: Record<CommodityCode, string> = {
-  // Metales preciosos → precio por gramo
   Au: "USD/g",
   Ag: "USD/g",
   Pt: "USD/g",
   Pd: "USD/g",
 
-  // Resto → precio por kilogramo de metal fino
   Cu: "USD/kg",
   Zn: "USD/kg",
   Pb: "USD/kg",
@@ -243,9 +258,7 @@ type NearbySummary = {
 };
 
 /** Resume si en los yacimientos cercanos aparece Au / Cu / Ag */
-function summarizeNearbyForInterpretation(
-  list: GeoSourceItem[]
-): NearbySummary | undefined {
+function summarizeNearbyForInterpretation(list: GeoSourceItem[]): NearbySummary | undefined {
   if (!list || !list.length) return undefined;
 
   const text = list
@@ -265,10 +278,7 @@ function summarizeNearbyForInterpretation(
 }
 
 /** Construye la interpretación considerando minerales + yacimientos cercanos */
-function buildInterpretationClient(
-  results: MineralResult[],
-  nearby?: NearbySummary
-): Interpretation {
+function buildInterpretationClient(results: MineralResult[], nearby?: NearbySummary): Interpretation {
   if (!results.length) {
     return {
       geology: "—",
@@ -279,8 +289,7 @@ function buildInterpretationClient(
   }
 
   const names = results.map((r) => r.name.toLowerCase());
-  const has = (s: string) =>
-    names.some((n) => n.includes(s.toLowerCase()));
+  const has = (s: string) => names.some((n) => n.includes(s.toLowerCase()));
 
   const gOxFe =
     has("limonita") ||
@@ -299,9 +308,7 @@ function buildInterpretationClient(
   if (gCuSulf) geo.push("Sulfuros de cobre en zona primaria");
 
   if (!geo.length) {
-    geo.push(
-      "Ensamble mineral compatible con ambiente hidrotermal o supergénico."
-    );
+    geo.push("Ensamble mineral compatible con ambiente hidrotermal o supergénico.");
   }
 
   const hasAuNear = nearby?.hasAu ?? false;
@@ -348,9 +355,7 @@ function buildInterpretationClient(
     }
   }
 
-  caveats.push(
-    "• No utilizar este reporte como único sustento para decisiones económicas o de inversión."
-  );
+  caveats.push("• No utilizar este reporte como único sustento para decisiones económicas o de inversión.");
 
   return {
     geology: "• " + geo.join(" • "),
@@ -398,9 +403,7 @@ export default function AnalisisPage() {
   React.useEffect(() => {
     async function loadMarketPrices() {
       try {
-        const res = await fetch("/api/commodity-prices?currency=USD", {
-          cache: "no-store",
-        });
+        const res = await fetch("/api/commodity-prices?currency=USD", { cache: "no-store" });
         const data = await res.json();
 
         if (!res.ok || !data?.prices) {
@@ -424,11 +427,8 @@ export default function AnalisisPage() {
             const isPrecious = name === "Oro" || name === "Plata";
 
             if (!isPrecious) {
-              if (unit.includes("USD/T")) {
-                finalPrice = rawValue / 1000;
-              } else {
-                finalPrice = rawValue / 1000;
-              }
+              if (unit.includes("USD/T")) finalPrice = rawValue / 1000;
+              else finalPrice = rawValue / 1000;
             }
 
             next[code] = finalPrice;
@@ -450,7 +450,9 @@ export default function AnalisisPage() {
 
   /* Resultados */
   const [globalResults, setGlobalResults] = React.useState<MineralResult[]>([]);
-  const [perImage, setPerImage] = React.useState<{ fileName: string; results: MineralResult[] }[]>([]);
+  const [perImage, setPerImage] = React.useState<{ fileName: string; results: MineralResult[] }[]>(
+    []
+  );
   const [excluded, setExcluded] = React.useState<{ fileName: string; reason: string }[]>([]);
   const [interpretation, setInterpretation] = React.useState<Interpretation | null>(null);
 
@@ -483,89 +485,87 @@ export default function AnalisisPage() {
   const [errorNearby, setErrorNearby] = React.useState<string | null>(null);
 
   // Recalcular interpretación cuando cambian resultados o yacimientos
-React.useEffect(() => {
-  async function runInterpretation() {
-    if (!globalResults.length) {
-      setInterpretation(null);
-      return;
-    }
+  React.useEffect(() => {
+    async function runInterpretation() {
+      if (!globalResults.length) {
+        setInterpretation(null);
+        return;
+      }
 
-    // Preparar payload igual que en el PDF
-    const payload = {
-      sampleLabel: sampleCode || null,
-      mixGlobal: globalResults,
-      byImage: perImage.map((p) => ({
-        filename: p.fileName,
-        minerals: p.results,
-        excluded: null,
-      })),
-      nearbySources:
-        nearbySelected.length > 0 ? nearbySelected : nearbyItems,
-      geoContext: geo || null,
-    };
+      const payload = {
+        sampleLabel: sampleCode || null,
+        mixGlobal: globalResults,
+        byImage: perImage.map((p) => ({
+          filename: p.fileName,
+          minerals: p.results,
+          excluded: null,
+        })),
+        nearbySources: nearbySelected.length > 0 ? nearbySelected : nearbyItems,
+        geoContext: geo || null,
+      };
 
-    try {
-      const resp = await fetch("/api/interpret", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      try {
+        const resp = await fetch("/api/interpret", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
 
-      if (resp.ok) {
-        const data = await resp.json();
-        setInterpretation(data);
-      } else {
-        console.warn("Fallo interpret dinámico:", await resp.text());
-
-        // fallback a tu función antigua
+        if (resp.ok) {
+          const data = await resp.json();
+          setInterpretation(data);
+        } else {
+          console.warn("Fallo interpret dinámico:", await resp.text());
+          const summary = summarizeNearbyForInterpretation(
+            nearbySelected.length ? nearbySelected : nearbyItems
+          );
+          setInterpretation(buildInterpretationClient(globalResults, summary));
+        }
+      } catch (err) {
+        console.error("Error interpret:", err);
         const summary = summarizeNearbyForInterpretation(
           nearbySelected.length ? nearbySelected : nearbyItems
         );
         setInterpretation(buildInterpretationClient(globalResults, summary));
       }
-    } catch (err) {
-      console.error("Error interpret:", err);
-
-      // fallback seguro
-      const summary = summarizeNearbyForInterpretation(
-        nearbySelected.length ? nearbySelected : nearbyItems
-      );
-      setInterpretation(buildInterpretationClient(globalResults, summary));
     }
-  }
 
-  runInterpretation();
-}, [globalResults, perImage, nearbyItems, nearbySelected, geo, sampleCode]);
-// ===================== CONTEXTO GEOLÓGICO (unidad + litología) =====================
-React.useEffect(() => {
-  const lat = geo?.point?.lat;
-  const lng = geo?.point?.lng;
+    runInterpretation();
+  }, [globalResults, perImage, nearbyItems, nearbySelected, geo, sampleCode]);
 
-  if (typeof lat !== "number" || typeof lng !== "number") {
-    setGeologyContext(null);
-    return;
-  }
+  // ===================== CONTEXTO GEOLÓGICO (unidad + litología) =====================
+  React.useEffect(() => {
+    const lat = geo?.point?.lat;
+    const lng = geo?.point?.lng;
 
-  (async () => {
-    try {
-      const res = await fetch(`/api/geounit?lat=${lat}&lng=${lng}`);
-      if (!res.ok) {
-        console.warn("Sin datos geológicos");
-        setGeologyContext(null);
-        return;
-      }
-      const data = await res.json();
-      setGeologyContext(data.geology || null);
-    } catch (err) {
-      console.error("Error obteniendo geología:", err);
+    if (typeof lat !== "number" || typeof lng !== "number") {
       setGeologyContext(null);
+      return;
     }
-  })();
-}, [geo]);
 
+    (async () => {
+      try {
+        const res = await fetch(`/api/geounit?lat=${lat}&lng=${lng}`);
+        if (!res.ok) {
+          console.warn("Sin datos geológicos");
+          setGeologyContext(null);
+          return;
+        }
+        const data = await res.json();
+        setGeologyContext(data.geology || null);
+      } catch (err) {
+        console.error("Error obteniendo geología:", err);
+        setGeologyContext(null);
+      }
+    })();
+  }, [geo]);
 
   /* Handlers */
-  const setNum = (metal: "Cobre" | "Zinc" | "Plomo", field: "recovery" | "payable", val: string) => {
+  const setNum = (
+    metal: "Cobre" | "Zinc" | "Plomo",
+    field: "recovery" | "payable",
+    val: string
+  ) => {
     const pct = Math.max(0, Math.min(100, Number(val)));
     setAdj((prev) => ({
       ...prev,
@@ -612,12 +612,7 @@ React.useEffect(() => {
       setGlobalResults(j.global ?? []);
 
       try {
-        const cc =
-          geo?.countryCode ||
-          geo?.country ||
-          geo?.point?.country ||
-          null;
-
+        const cc = geo?.countryCode || (geo as any)?.country || (geo as any)?.point?.country || null;
         const sug = suggestFromMinerals(j.global ?? [], cc || undefined);
         setAutoSuggestion(sug);
       } catch (err) {
@@ -668,10 +663,7 @@ React.useEffect(() => {
       setNearbyItems([]);
       setErrorNearby(null);
 
-      const r = await fetch(
-        `/api/nearby?lat=${lat}&lon=${lng}&radius_km=15`,
-        { cache: "no-store" }
-      );
+      const r = await fetch(`/api/nearby?lat=${lat}&lon=${lng}&radius_km=15`, { cache: "no-store" });
       const js = await r.json();
 
       if (!r.ok) {
@@ -682,9 +674,7 @@ React.useEffect(() => {
       const items = (js.items ?? []) as GeoSourceItem[];
       setNearbyItems(items);
 
-      if (!items.length) {
-        setToast("No se encontraron yacimientos automáticos.");
-      }
+      if (!items.length) setToast("No se encontraron yacimientos automáticos.");
     } catch (e: any) {
       console.error(e);
       setErrorNearby("Error buscando yacimientos.");
@@ -720,127 +710,106 @@ React.useEffect(() => {
     return { type, subtype, commodityText, distanceKm };
   }
   /* ===================== PDF GENERAL ===================== */
- async function handleExportGeneralPdf() {
-  if (!globalResults.length) {
-    setToast("Primero analiza las imágenes.");
-    return;
-  }
+  async function handleExportGeneralPdf() {
+    if (!globalResults.length) {
+      setToast("Primero analiza las imágenes.");
+      return;
+    }
 
-  setBusyGeneralPdf(true);
+    setBusyGeneralPdf(true);
 
-  try {
-    // ============================================================
-    // 1) PREPARAR PAYLOAD PARA INTERPRETACIÓN DINÁMICA
-    // ============================================================
-    const payload = {
-      sampleLabel: sampleCode || null,
-      mixGlobal: globalResults,
-      byImage: perImage.map((p) => ({
+    try {
+      // 1) Payload para interpretación dinámica
+      const payload = {
+        sampleLabel: sampleCode || null,
+        mixGlobal: globalResults,
+        byImage: perImage.map((p) => ({
+          filename: p.fileName,
+          minerals: p.results,
+          excluded: null,
+        })),
+        nearbySources: nearbySelected.length > 0 ? nearbySelected : nearbyItems,
+        geoContext: geo || null,
+      };
+
+      // 2) Llamar /api/interpret
+      let interpreted: any = null;
+
+      try {
+        const resp = await fetch("/api/interpret", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (resp.ok) {
+          interpreted = await resp.json();
+          console.log("[Interpretación dinámica lista]", interpreted);
+        } else {
+          console.warn("[Interpretación dinámica] Falló /api/interpret:", await resp.text());
+        }
+      } catch (err) {
+        console.error("[Interpretación dinámica] Error en llamada:", err);
+      }
+
+      // 3) Config económica
+      const processAdj = {
+        Cobre: adj.Cobre ?? { recovery: 0.85, payable: 0.96 },
+        Zinc: adj.Zinc ?? { recovery: 0.85, payable: 0.85 },
+        Plomo: adj.Plomo ?? { recovery: 0.9, payable: 0.9 },
+      };
+
+      const econ = {
+        currency,
+        prices: { ...prices },
+        payables: { ...payables },
+        fx: { usdToPen, eurToPen },
+      };
+
+      const byImage = perImage.map((p) => ({
         filename: p.fileName,
         minerals: p.results,
         excluded: null,
-      })),
-      nearbySources:
-        nearbySelected.length > 0 ? nearbySelected : nearbyItems,
-      geoContext: geo || null,
-    };
+      }));
 
-    // ============================================================
-    // 2) LLAMAR A /api/interpret
-    // ============================================================
-    let interpreted = null;
+      const selectedOrAll = nearbySelected.length > 0 ? nearbySelected : nearbyItems;
 
-    try {
-      const resp = await fetch("/api/interpret", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      // 4) Opciones PDF
+      const opts = {
+        title: `Reporte ${sampleCode}`,
+        note: "Informe generado automáticamente por MinQuant_WSCA.",
+        lat: geo?.point?.lat,
+        lng: geo?.point?.lng,
+        dateISO: new Date().toISOString(),
+        econ,
+        nearbySources: selectedOrAll,
+        processAdj,
 
-      if (resp.ok) {
-        interpreted = await resp.json();
-        console.log("[Interpretación dinámica lista]", interpreted);
-      } else {
-        console.warn(
-          "[Interpretación dinámica] Falló /api/interpret:",
-          await resp.text()
-        );
-      }
-    } catch (err) {
-      console.error("[Interpretación dinámica] Error en llamada:", err);
+        images: imagesDataURL.map((dataUrl, idx) => ({
+          label: photos[idx]?.file?.name || `Imagen ${idx + 1}`,
+          dataUrl,
+        })),
+
+        interpretation: interpreted || interpretation || null,
+        geologyContext,
+      };
+
+      // 5) Generar PDF
+      const doc = await buildReportPdfPlus({
+        mixGlobal: globalResults,
+        byImage,
+        opts,
+      } as any);
+
+      const buf = doc.output("arraybuffer");
+      downloadPdf(new Uint8Array(buf), `Reporte_${sampleCode}.pdf`);
+    } catch (e) {
+      console.error(e);
+      setToast("Error al generar el PDF.");
+    } finally {
+      setBusyGeneralPdf(false);
     }
-
-    // ============================================================
-    // 3) CONFIG ECONÓMICA / PAYABLES / FX (TU CÓDIGO NORMAL)
-    // ============================================================
-    const processAdj = {
-      Cobre: adj.Cobre ?? { recovery: 0.85, payable: 0.96 },
-      Zinc: adj.Zinc ?? { recovery: 0.85, payable: 0.85 },
-      Plomo: adj.Plomo ?? { recovery: 0.9, payable: 0.9 },
-    };
-
-    const econ = {
-      currency,
-      prices: { ...prices },
-      payables: { ...payables },
-      fx: {
-        usdToPen,
-        eurToPen,
-      },
-    };
-
-    const byImage = perImage.map((p) => ({
-      filename: p.fileName,
-      minerals: p.results,
-      excluded: null,
-    }));
-
-    const selectedOrAll =
-      nearbySelected.length > 0 ? nearbySelected : nearbyItems;
-
- // ============================================================
-// 4) ARMAR OPCIONES PARA EL PDF GENERAL
-// ============================================================
-const opts = {
-  title: `Reporte ${sampleCode}`,
-  note: "Informe generado automáticamente por MinQuant_WSCA.",
-  lat: geo?.point?.lat,
-  lng: geo?.point?.lng,
-  dateISO: new Date().toISOString(),
-  econ,
-  nearbySources: selectedOrAll,
-  processAdj,
-
-  // 👇 Lista de imágenes con etiqueta y dataUrl
-  images: imagesDataURL.map((dataUrl, idx) => ({
-    label: photos[idx]?.file?.name || `Imagen ${idx + 1}`,
-    dataUrl,
-  })),
-
-  // 🔥 CLAVE: enviar la interpretación dinámica al PDF
-  interpretation: interpreted || interpretation || null,
-    geologyContext,
-};
-
-
-    // ============================================================
-    // 5) GENERAR PDF GENERAL
-    // ============================================================
-    const doc = await buildReportPdfPlus({
-      mixGlobal: globalResults,
-      byImage,
-      opts,
-    } as any);
-
-    const buf = doc.output("arraybuffer");
-    downloadPdf(new Uint8Array(buf), `Reporte_${sampleCode}.pdf`);
-  } catch (e) {
-    console.error(e);
-    setToast("Error al generar el PDF.");
-  } finally {
-    setBusyGeneralPdf(false);
   }
-}
 
   /* ===================== FICHA INDIVIDUAL ===================== */
   async function openMineral(m: MineralResult) {
@@ -923,29 +892,71 @@ const opts = {
     return g;
   }, []);
 
+  // ===================== ASISTENTE (contexto visible para /analisis) =====================
+  const assistantVisibleState = React.useMemo(() => {
+    return {
+      sampleCode,
+      currency,
+      fx: { usdToPen, eurToPen },
+
+      results: {
+        globalCount: globalResults.length,
+        globalTop: globalResults.slice(0, 6).map((r) => ({ name: r.name, pct: r.pct })),
+        perImageCount: perImage.length,
+        excludedCount: excluded.length,
+      },
+
+      geo: geo?.point
+        ? {
+            lat: geo.point.lat,
+            lng: geo.point.lng,
+            countryCode: (geo as any)?.countryCode || (geo as any)?.country || (geo as any)?.point?.country || null,
+          }
+        : null,
+
+      geologyContext: geologyContext || null,
+
+      nearby: {
+        found: nearbyItems.length,
+        selected: nearbySelected.length,
+      },
+    };
+  }, [
+    sampleCode,
+    currency,
+    usdToPen,
+    eurToPen,
+    globalResults,
+    perImage,
+    excluded,
+    geo,
+    geologyContext,
+    nearbyItems,
+    nearbySelected,
+  ]);
+
   return (
     <main className="min-h-screen">
-<header className="w-full py-3 px-5 bg-gradient-to-r from-cyan-600 to-emerald-600 text-white">
-  <div className="max-w-6xl mx-auto flex items-center justify-between">
-    <h1 className="text-lg font-semibold">Cámara • Ubicación • Análisis</h1>
+      <header className="w-full py-3 px-5 bg-gradient-to-r from-cyan-600 to-emerald-600 text-white">
+        <div className="max-w-6xl mx-auto flex items-center justify-between">
+          <h1 className="text-lg font-semibold">Cámara • Ubicación • Análisis</h1>
 
-    <div className="flex items-center gap-2">
-      <button
-        onClick={handleNewAnalysis}
-        className="px-3 py-1 rounded bg-white/20 hover:bg-white/30"
-      >
-        Nuevo Análisis
-      </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleNewAnalysis}
+              className="px-3 py-1 rounded bg-white/20 hover:bg-white/30"
+            >
+              Nuevo Análisis
+            </button>
 
-      <Link href="/" className="px-3 py-1 rounded bg-white/20 hover:bg-white/30">
-        Inicio
-      </Link>
+            <Link href="/" className="px-3 py-1 rounded bg-white/20 hover:bg-white/30">
+              Inicio
+            </Link>
 
-      {/* ⭐ BOTÓN DE CERRAR SESIÓN */}
-      <LogoutButton />
-    </div>
-  </div>
-</header>
+            <LogoutButton />
+          </div>
+        </div>
+      </header>
 
       <section className="max-w-6xl mx-auto px-5 py-5 grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* IZQUIERDA */}
@@ -1042,9 +1053,7 @@ const opts = {
           {/* Economía (20 commodities) */}
           <div className="border rounded-lg p-3 bg-gray-50 mb-4">
             <div className="flex items-center justify-between mb-2">
-              <div className="font-semibold">
-                Economía – Precios de referencia (editable por el usuario)
-              </div>
+              <div className="font-semibold">Economía – Precios de referencia (editable por el usuario)</div>
 
               <button
                 type="button"
@@ -1068,9 +1077,7 @@ const opts = {
             <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
               {Object.entries(groupedCommodities).map(([groupName, items]) => (
                 <div key={groupName} className="border rounded-md bg-white">
-                  <div className="px-2 py-1 border-b text-xs font-semibold bg-gray-100">
-                    {groupName}
-                  </div>
+                  <div className="px-2 py-1 border-b text-xs font-semibold bg-gray-100">{groupName}</div>
 
                   <div className="p-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {items.map((cfg) => (
@@ -1084,29 +1091,19 @@ const opts = {
                             <input
                               type="number"
                               step="0.01"
-                              value={convertPrice(
-                                prices[cfg.code],
-                                currency,
-                                usdToPen,
-                                eurToPen
-                              ).toFixed(2)}
+                              value={convertPrice(prices[cfg.code], currency, usdToPen, eurToPen).toFixed(2)}
                               onChange={(e) => {
                                 const raw = Number(e.target.value || 0);
                                 let priceInUSD = raw;
 
-                                if (currency === "PEN") {
-                                  priceInUSD = raw / usdToPen;
-                                }
+                                if (currency === "PEN") priceInUSD = raw / usdToPen;
 
                                 if (currency === "EUR") {
                                   const usdToEur = usdToPen / eurToPen;
                                   priceInUSD = raw / usdToEur;
                                 }
 
-                                setPrices((p) => ({
-                                  ...p,
-                                  [cfg.code]: priceInUSD,
-                                }));
+                                setPrices((p) => ({ ...p, [cfg.code]: priceInUSD }));
                               }}
                               className="border rounded px-2 py-1 w-20 text-xs"
                             />
@@ -1139,9 +1136,7 @@ const opts = {
               ))}
             </div>
 
-            <p className="text-[11px] text-gray-500 mt-2">
-              Estos valores se usarán en la estimación económica del PDF.
-            </p>
+            <p className="text-[11px] text-gray-500 mt-2">Estos valores se usarán en la estimación económica del PDF.</p>
           </div>
 
           <CameraCapture onPhotos={handlePhotos} resetSignal={sessionCounter} />
@@ -1179,9 +1174,7 @@ const opts = {
                 {loadingNearby ? "Buscando…" : "Buscar yacimientos cercanos"}
               </button>
 
-              {errorNearby && (
-                <div className="text-red-600 text-sm">{errorNearby}</div>
-              )}
+              {errorNearby && <div className="text-red-600 text-sm">{errorNearby}</div>}
             </div>
 
             <GeoSourcesPanel />
@@ -1202,14 +1195,9 @@ const opts = {
                   {nearbyItems.map((it) => {
                     const meta = getGeoMeta(it);
                     return (
-                      <li
-                        key={it.id}
-                        className="border rounded p-2 flex items-center justify-between"
-                      >
+                      <li key={it.id} className="border rounded p-2 flex items-center justify-between">
                         <div>
-                          <div className="font-medium text-sm">
-                            {it.name || "Sin nombre"}
-                          </div>
+                          <div className="font-medium text-sm">{it.name || "Sin nombre"}</div>
 
                           <div className="text-xs text-emerald-700">
                             {meta.type}
@@ -1219,15 +1207,11 @@ const opts = {
 
                           <div className="text-xs text-gray-500">
                             {it.latitude?.toFixed(5)}, {it.longitude?.toFixed(5)}
-                            {meta.distanceKm != null && (
-                              <> • {meta.distanceKm.toFixed(2)} km</>
-                            )}
+                            {meta.distanceKm != null && <> • {meta.distanceKm.toFixed(2)} km</>}
                           </div>
 
                           <div className="text-[11px] text-gray-500">
-                            {(it as any).source ||
-                              (it as any).source_name ||
-                              (it as any).source_url}
+                            {(it as any).source || (it as any).source_name || (it as any).source_url}
                           </div>
                         </div>
 
@@ -1236,9 +1220,7 @@ const opts = {
                             onClick={() => toggleNearbySelect(it)}
                             className="px-2 py-1 bg-sky-50 text-sky-700 text-xs rounded"
                           >
-                            {nearbySelected.find((s) => s.id === it.id)
-                              ? "Remover"
-                              : "Incluir"}
+                            {nearbySelected.find((s) => s.id === it.id) ? "Remover" : "Incluir"}
                           </button>
 
                           {(it as any).source_url && (
@@ -1256,7 +1238,6 @@ const opts = {
                   })}
                 </ul>
               )}
-
             </div>
           </div>
 
@@ -1284,9 +1265,7 @@ const opts = {
         <div>
           <h3 className="text-lg font-semibold mb-3">Resultados</h3>
 
-          {!globalResults.length && (
-            <p className="text-sm text-gray-500">Pendiente de análisis</p>
-          )}
+          {!globalResults.length && <p className="text-sm text-gray-500">Pendiente de análisis</p>}
 
           {!!globalResults.length && (
             <>
@@ -1298,9 +1277,7 @@ const opts = {
                     {globalResults.map((r, i) => (
                       <tr key={i} className="border-b">
                         <td className="px-3 py-2">{r.name}</td>
-                        <td className="px-3 py-2 text-right">
-                          {r.pct.toFixed(1)}%
-                        </td>
+                        <td className="px-3 py-2 text-right">{r.pct.toFixed(1)}%</td>
                         <td className="px-3 py-2 text-right">
                           <button
                             onClick={() => openMineral(r)}
@@ -1321,9 +1298,7 @@ const opts = {
 
                 {perImage.map((img, idx) => (
                   <div key={idx} className="mb-2">
-                    <div className="font-medium text-sm mb-1">
-                      {img.fileName}
-                    </div>
+                    <div className="font-medium text-sm mb-1">{img.fileName}</div>
                     <ul className="text-sm">
                       {img.results.map((r, i) => (
                         <li key={i} className="flex justify-between">
@@ -1355,21 +1330,14 @@ const opts = {
               {/* Sugerencias automáticas */}
               {autoSuggestion && (
                 <div className="border rounded-xl p-3 bg-emerald-50 mb-4">
-                  <div className="font-semibold mb-2 text-emerald-800">
-                    Sugerencias automáticas disponibles
-                  </div>
+                  <div className="font-semibold mb-2 text-emerald-800">Sugerencias automáticas disponibles</div>
 
-                  <p className="text-sm text-gray-700">
-                    Basado en minerales detectados y la zona.
-                  </p>
+                  <p className="text-sm text-gray-700">Basado en minerales detectados y la zona.</p>
 
                   <div className="text-sm mt-2">
-                    <b>País:</b>{" "}
-                    {autoSuggestion.country === "PE" ? "Perú" : "Global"} <br />
+                    <b>País:</b> {autoSuggestion.country === "PE" ? "Perú" : "Global"} <br />
                     <b>Metales detectados:</b>{" "}
-                    {autoSuggestion.commodities?.length
-                      ? autoSuggestion.commodities.join(", ")
-                      : "Ninguno"}
+                    {autoSuggestion.commodities?.length ? autoSuggestion.commodities.join(", ") : "Ninguno"}
                   </div>
 
                   {!suggestionApplied ? (
@@ -1380,9 +1348,7 @@ const opts = {
                       Aplicar sugerencias
                     </button>
                   ) : (
-                    <div className="text-sm text-emerald-700 mt-2">
-                      ✔ Sugerencias aplicadas
-                    </div>
+                    <div className="text-sm text-emerald-700 mt-2">✔ Sugerencias aplicadas</div>
                   )}
                 </div>
               )}
@@ -1404,9 +1370,7 @@ const opts = {
               {/* Nearby seleccionados */}
               {nearbySelected.length > 0 && (
                 <div className="border rounded-xl p-3 bg-white mt-4">
-                  <div className="font-semibold mb-2">
-                    Yacimientos incluidos ({nearbySelected.length})
-                  </div>
+                  <div className="font-semibold mb-2">Yacimientos incluidos ({nearbySelected.length})</div>
 
                   <ul className="text-sm space-y-2">
                     {nearbySelected.map((s) => {
@@ -1414,14 +1378,9 @@ const opts = {
                       const meta = getGeoMeta(s);
 
                       return (
-                        <li
-                          key={s.id}
-                          className="flex items-center justify-between"
-                        >
+                        <li key={s.id} className="flex items-center justify-between">
                           <div>
-                            <div className="font-medium">
-                              {s.name || "Sin nombre"}
-                            </div>
+                            <div className="font-medium">{s.name || "Sin nombre"}</div>
 
                             <div className="text-xs text-emerald-700">
                               {meta.type}
@@ -1431,19 +1390,13 @@ const opts = {
 
                             <div className="text-xs text-gray-500">
                               {s.latitude?.toFixed(5)}, {s.longitude?.toFixed(5)}
-                              {meta.distanceKm != null && (
-                                <> • {meta.distanceKm.toFixed(2)} km</>
-                              )}
+                              {meta.distanceKm != null && <> • {meta.distanceKm.toFixed(2)} km</>}
                             </div>
                           </div>
 
                           <div className="flex items-center gap-2">
                             {anyS.source_url && (
-                              <a
-                                href={anyS.source_url}
-                                target="_blank"
-                                className="text-xs underline text-blue-600"
-                              >
+                              <a href={anyS.source_url} target="_blank" className="text-xs underline text-blue-600">
                                 Fuente
                               </a>
                             )}
@@ -1461,7 +1414,6 @@ const opts = {
                   </ul>
                 </div>
               )}
-
             </>
           )}
         </div>
@@ -1472,14 +1424,9 @@ const opts = {
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-xl max-w-lg w-full">
             <div className="flex justify-between border-b px-4 py-2">
-              <h4 className="font-semibold">
-                {modalInfo?.nombre || modalMineral?.name}
-              </h4>
+              <h4 className="font-semibold">{modalInfo?.nombre || modalMineral?.name}</h4>
 
-              <button
-                onClick={() => setModalOpen(false)}
-                className="px-2 py-1 bg-gray-200 rounded"
-              >
+              <button onClick={() => setModalOpen(false)} className="px-2 py-1 bg-gray-200 rounded">
                 Cerrar
               </button>
             </div>
@@ -1547,9 +1494,23 @@ const opts = {
         </div>
       )}
 
-      {/* Toast */}
+      {/* Asistente con contexto real de /analisis */}
+      <AssistantDock
+        visibleState={assistantVisibleState}
+        uiHints={[
+          "Tomar/Subir fotos",
+          "Obtener ubicación (GPS)",
+          "Analizar",
+          "Buscar yacimientos cercanos",
+          "Interpretación",
+          "PDF general",
+        ]}
+        compact
+      />
+
+      {/* Toast (lo subo para que NO choque con el dock) */}
       {toast && (
-        <div className="fixed right-4 bottom-6 z-50 bg-black/85 text-white px-4 py-2 rounded shadow">
+        <div className="fixed right-4 bottom-24 z-50 bg-black/85 text-white px-4 py-2 rounded shadow">
           {toast}
         </div>
       )}
