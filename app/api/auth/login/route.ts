@@ -1,3 +1,4 @@
+// app/api/auth/login/route.ts
 import { NextResponse } from "next/server";
 import { validateCredentials, ensureAdminUser } from "@/lib/users";
 import { createSession } from "@/lib/session";
@@ -5,32 +6,47 @@ import { createSession } from "@/lib/session";
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => null);
+
     if (!body) {
-      return NextResponse.json({ ok: false, error: "Formato inválido" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "Formato de datos inválido." },
+        { status: 400 }
+      );
     }
 
     const { id, password } = body;
+
     if (!id || !password) {
-      return NextResponse.json({ ok: false, error: "ID y contraseña requeridos" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "id y password son requeridos" },
+        { status: 400 }
+      );
     }
 
     await ensureAdminUser();
 
+    const normalizedId = String(id).trim().toUpperCase();
+    const cleanPassword = String(password).trim(); // NO fuerces mayúsculas aquí
+
     const result = await validateCredentials({
-      id: String(id).trim().toUpperCase(),
-      password: String(password).trim(),
+      id: normalizedId,
+      password: cleanPassword,
     });
 
     if (result === "TRIAL_EXPIRED") {
       return NextResponse.json(
-        { ok: false, error: "Tu periodo de prueba ha finalizado." },
+        {
+          ok: false,
+          error: "Acceso de prueba vencido (30 días). Solicita reactivación al administrador.",
+          code: "TRIAL_EXPIRED",
+        },
         { status: 403 }
       );
     }
 
     if (!result) {
       return NextResponse.json(
-        { ok: false, error: "ID o contraseña incorrectos." },
+        { ok: false, error: "Credenciales inválidas o usuario inactivo" },
         { status: 401 }
       );
     }
@@ -38,6 +54,7 @@ export async function POST(req: Request) {
     const session = await createSession(result.id);
 
     const res = NextResponse.json({ ok: true, user: result });
+
     res.cookies.set("mq_session", session.id, {
       httpOnly: true,
       sameSite: "lax",
@@ -48,7 +65,10 @@ export async function POST(req: Request) {
 
     return res;
   } catch (err) {
-    console.error("Login error:", err);
-    return NextResponse.json({ ok: false, error: "Error interno" }, { status: 500 });
+    console.error("Error en /api/auth/login:", err);
+    return NextResponse.json(
+      { ok: false, error: "Error interno al iniciar sesión." },
+      { status: 500 }
+    );
   }
 }

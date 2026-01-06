@@ -1,4 +1,3 @@
-// app/admin/usuarios/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -12,6 +11,8 @@ type User = {
 };
 
 type SeedUser = User & { passwordPlain?: string };
+
+const ADMIN_ID = "U000";
 
 export default function AdminUsuariosPage() {
   const [users, setUsers] = useState<User[]>([]);
@@ -60,12 +61,9 @@ export default function AdminUsuariosPage() {
           }))
         );
 
-        // Muestra en consola las credenciales iniciales
         console.log("=== Usuarios creados (ID, Token, Password) ===");
         seeded.forEach((u) => {
-          console.log(
-            `${u.id}\t${u.name}\tTOKEN: ${u.token}\tPASS: ${u.passwordPlain}`
-          );
+          console.log(`${u.id}\t${u.name}\tTOKEN: ${u.token}\tPASS: ${u.passwordPlain}`);
         });
 
         setMessage(
@@ -81,7 +79,15 @@ export default function AdminUsuariosPage() {
     }
   }
 
-  async function handleAction(id: string, action: "toggle" | "reset-token" | "reset-password") {
+  async function handleAction(
+    id: string,
+    action: "toggle" | "reset-token" | "reset-password"
+  ) {
+    if (id === ADMIN_ID) {
+      alert("El usuario administrador está protegido y no puede modificarse desde aquí.");
+      return;
+    }
+
     setLoading(true);
     setMessage(null);
     try {
@@ -98,15 +104,11 @@ export default function AdminUsuariosPage() {
       }
 
       if (action === "reset-password") {
-        alert(
-          `Nueva contraseña para ${data.user.id}:\n\n${data.newPassword}\n\nGuárdala en un lugar seguro.`
-        );
+        alert(`Nueva contraseña para ${data.user.id}:\n\n${data.newPassword}\n\nGuárdala en un lugar seguro.`);
       }
 
       if (action === "reset-token") {
-        alert(
-          `Nuevo token para ${data.user.id}:\n\n${data.user.token}\n\nCopia y guarda el valor si vas a entregarlo al usuario.`
-        );
+        alert(`Nuevo token para ${data.user.id}:\n\n${data.user.token}\n\nCopia y guarda el valor si vas a entregarlo al usuario.`);
       }
 
       await loadUsers();
@@ -164,55 +166,66 @@ export default function AdminUsuariosPage() {
                 </tr>
               )}
 
-              {users.map((u) => (
-                <tr
-                  key={u.id}
-                  className="border-t border-slate-800 hover:bg-slate-900/40"
-                >
-                  <td className="px-3 py-2 font-mono text-xs">{u.id}</td>
-                  <td className="px-3 py-2">{u.name}</td>
-                  <td className="px-3 py-2 font-mono text-xs">
-                    {u.token.slice(0, 8)}…
-                  </td>
-                  <td className="px-3 py-2">
-                    <span
-                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                        u.active
-                          ? "bg-emerald-500/20 text-emerald-300"
-                          : "bg-rose-500/20 text-rose-300"
-                      }`}
-                    >
-                      {u.active ? "Activo" : "Inactivo"}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-xs text-slate-400">
-                    {new Date(u.createdAt).toLocaleString()}
-                  </td>
-                  <td className="px-3 py-2 space-x-2">
-                    <button
-                      onClick={() => handleAction(u.id, "toggle")}
-                      className="rounded-lg border border-slate-700 px-2 py-1 text-xs hover:bg-slate-800"
-                      disabled={loading}
-                    >
-                      {u.active ? "Desactivar" : "Activar"}
-                    </button>
-                    <button
-                      onClick={() => handleAction(u.id, "reset-token")}
-                      className="rounded-lg border border-slate-700 px-2 py-1 text-xs hover:bg-slate-800"
-                      disabled={loading}
-                    >
-                      Nuevo token
-                    </button>
-                    <button
-                      onClick={() => handleAction(u.id, "reset-password")}
-                      className="rounded-lg border border-slate-700 px-2 py-1 text-xs hover:bg-slate-800"
-                      disabled={loading}
-                    >
-                      Nueva contraseña
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {users.map((u) => {
+                const isAdmin = u.id === ADMIN_ID;
+
+                return (
+                  <tr key={u.id} className="border-t border-slate-800 hover:bg-slate-900/40">
+                    <td className="px-3 py-2 font-mono text-xs">
+                      {u.id}{" "}
+                      {isAdmin && (
+                        <span className="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300">
+                          Protegido
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">{u.name}</td>
+                    <td className="px-3 py-2 font-mono text-xs">
+                      {u.token.slice(0, 8)}…
+                    </td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                          u.active
+                            ? "bg-emerald-500/20 text-emerald-300"
+                            : "bg-rose-500/20 text-rose-300"
+                        }`}
+                      >
+                        {u.active ? "Activo" : "Inactivo"}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-xs text-slate-400">
+                      {new Date(u.createdAt).toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2 space-x-2">
+                      <button
+                        onClick={() => handleAction(u.id, "toggle")}
+                        className="rounded-lg border border-slate-700 px-2 py-1 text-xs hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                        disabled={loading || isAdmin}
+                        title={isAdmin ? "El admin no se puede desactivar" : ""}
+                      >
+                        {u.active ? "Desactivar" : "Activar"}
+                      </button>
+                      <button
+                        onClick={() => handleAction(u.id, "reset-token")}
+                        className="rounded-lg border border-slate-700 px-2 py-1 text-xs hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                        disabled={loading || isAdmin}
+                        title={isAdmin ? "El admin no se puede modificar aquí" : ""}
+                      >
+                        Nuevo token
+                      </button>
+                      <button
+                        onClick={() => handleAction(u.id, "reset-password")}
+                        className="rounded-lg border border-slate-700 px-2 py-1 text-xs hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                        disabled={loading || isAdmin}
+                        title={isAdmin ? "El admin no se puede modificar aquí" : ""}
+                      >
+                        Nueva contraseña
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

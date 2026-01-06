@@ -30,12 +30,13 @@ export default function LoginPage() {
         }),
       });
 
+      const data = await res.json().catch(() => null);
+
       if (!res.ok) {
-        setError("ID o contraseña incorrectos.");
+        setError(data?.error || "ID o contraseña incorrectos.");
         return;
       }
 
-      // Login OK -> ir al inicio
       router.push("/");
     } catch (err) {
       console.error(err);
@@ -50,8 +51,8 @@ export default function LoginPage() {
       <div className="w-full max-w-md bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-lg">
         <h1 className="text-2xl font-bold mb-1 text-center">MinQuant_WSCA</h1>
         <p className="text-xs text-slate-400 text-center mb-6">
-          Acceso con ID (U000–U040) y contraseña.  
-          Los datos se convierten automáticamente a <b>MAYÚSCULAS</b>.
+          Acceso con ID (U000–U040) y contraseña. Los datos se convierten
+          automáticamente a <b>MAYÚSCULAS</b>.
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -65,12 +66,12 @@ export default function LoginPage() {
               value={userId}
               onChange={(e) => setUserId(e.target.value.toUpperCase())}
               className="w-full rounded-md bg-slate-950 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-              placeholder="U000, U001, U002..."
+              placeholder="U001, U002, U003..."
               autoComplete="off"
             />
           </div>
 
-          {/* Password con botón mostrar/ocultar */}
+          {/* Password */}
           <div>
             <label className="block text-sm font-medium text-slate-200 mb-1">
               Contraseña
@@ -81,7 +82,7 @@ export default function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value.toUpperCase())}
                 className="w-full rounded-md bg-slate-950 border border-slate-700 px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-                placeholder="MQ-0001, ADMIN-WSCA-2025..."
+                placeholder="MQ-0001, MQ-0002..."
                 autoComplete="off"
               />
               <button
@@ -113,8 +114,8 @@ export default function LoginPage() {
         </form>
 
         <p className="mt-4 text-[11px] text-slate-500 text-center">
-          Ejemplo: <b>U000 / ADMIN-WSCA-2025</b> (administrador)  
-          o <b>U001 / MQ-0001</b> para usuarios estándar.
+          Ejemplo usuario: <b>U001 / MQ-0001</b>. <br />
+          Si eres administrador, usa tus credenciales privadas.
         </p>
       </div>
     </main>
