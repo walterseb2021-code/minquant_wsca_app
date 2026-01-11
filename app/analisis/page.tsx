@@ -1,3 +1,4 @@
+// app/analisis/page.tsx
 "use client";
 
 import React from "react";
@@ -194,7 +195,7 @@ const DEFAULT_PAYABLES: Record<CommodityCode, number> = {
   REE: 0.9,
 };
 
-// Conversión sólo para la UI
+// ✅ FIX: Conversión sólo para la UI (evita división por 0 / Infinity)
 function convertPrice(
   priceUSD: number,
   currency: CurrencyCode,
@@ -202,11 +203,19 @@ function convertPrice(
   eurToPen: number
 ): number {
   if (currency === "USD") return priceUSD;
-  if (currency === "PEN") return priceUSD * usdToPen;
+
+  const safeUsdToPen = usdToPen > 0 ? usdToPen : 0;
+  const safeEurToPen = eurToPen > 0 ? eurToPen : 0;
+
+  if (currency === "PEN") return safeUsdToPen > 0 ? priceUSD * safeUsdToPen : 0;
+
   if (currency === "EUR") {
-    const usdToEur = usdToPen / eurToPen;
+    // USD->EUR = (USD->PEN)/(EUR->PEN)
+    if (safeUsdToPen <= 0 || safeEurToPen <= 0) return 0;
+    const usdToEur = safeUsdToPen / safeEurToPen;
     return priceUSD * usdToEur;
   }
+
   return priceUSD;
 }
 
@@ -709,6 +718,7 @@ export default function AnalisisPage() {
 
     return { type, subtype, commodityText, distanceKm };
   }
+
   /* ===================== PDF GENERAL ===================== */
   async function handleExportGeneralPdf() {
     if (!globalResults.length) {
@@ -892,47 +902,214 @@ export default function AnalisisPage() {
     return g;
   }, []);
 
+  // ✅ NEW: resumen económico (top 6 commodities por "precio convertido" para contexto del asistente)
+  const econTopPreview = React.useMemo(() => {
+    try {
+      const list = COMMODITY_CONFIG.map((cfg) => {
+        const priceConverted = convertPrice(prices[cfg.code], currency, usdToPen, eurToPen);
+        return {
+          code: cfg.code,
+          label: cfg.label,
+          unit: COMMODITY_UNITS[cfg.code],
+          priceConverted,
+          payable: payables[cfg.code],
+        };
+      });
+
+      // ordena por precio convertido desc (solo preview)
+      list.sort((a, b) => (b.priceConverted || 0) - (a.priceConverted || 0));
+      return list.slice(0, 6);
+    } catch {
+      return [];
+    }
+  }, [prices, payables, currency, usdToPen, eurToPen]);
+
   // ===================== ASISTENTE (contexto visible para /analisis) =====================
   const assistantVisibleState = React.useMemo(() => {
+    const photosCount = photos.length;
+    const extraIgnored = Math.max(0, photosCount - 6);
+    const hasGeo = !!geo?.point;
+    const hasResults = globalResults.length > 0;
+
+    // ✅ NEW: mini resumen de proceso y economía para respuestas menos “genéricas”
+    const processAdjPreview = {
+      Cobre: {
+        recovery: adj.Cobre?.recovery ?? null,
+        payable: adj.Cobre?.payable ?? null,
+      },
+      Zinc: {
+        recovery: adj.Zinc?.recovery ?? null,
+        payable: adj.Zinc?.payable ?? null,
+      },
+      Plomo: {
+        recovery: adj.Plomo?.recovery ?? null,
+        payable: adj.Plomo?.payable ?? null,
+      },
+    };
+
     return {
+      // Dónde estás y qué estás haciendo (para guía paso a paso)
+      screen: "/analisis",
+            // Texto humano visible para que guardrails/fallback entiendan “qué hay en pantalla”
+      screenText: [
+        "Pantalla: /analisis (Cámara • Ubicación • Análisis).",
+        `Código de muestra: ${sampleCode}. Moneda: ${currency}.`,
+        `Fotos cargadas: ${photosCount}${extraIgnored > 0 ? ` (sobran ${extraIgnored}, máximo 6)` : ""}.`,
+        hasGeo
+          ? `GPS: ${geo?.point?.lat?.toFixed?.(5)}, ${geo?.point?.lng?.toFixed?.(5)}.`
+          : "GPS: pendiente (botón Obtener ubicación).",
+        hasResults
+          ? `Resultados: ${globalResults.length} minerales (mezcla global).`
+          : "Resultados: pendientes (botón Analizar).",
+        nearbyItems.length
+          ? `Yacimientos cercanos: ${nearbyItems.length} (incluidos: ${nearbySelected.length}).`
+          : "Yacimientos cercanos: no consultados o sin resultados.",
+        "Botones: Analizar / PDF general / Buscar yacimientos cercanos / Ficha mineral.",
+      ].join(" "),
+
+      stepHint: !photosCount
+        ? "Faltan fotos"
+        : !hasGeo
+        ? "Falta ubicación GPS"
+        : !hasResults
+        ? "Listo para Analizar"
+        : "Resultados listos / Puedes generar PDF",
+
+      // Identificadores / economía
       sampleCode,
       currency,
       fx: { usdToPen, eurToPen },
 
+      // ✅ NEW: ajustes del proceso y preview económico
+      processAdj: processAdjPreview,
+      econTopPreview,
+
+      // Estado del flujo (lo que el asistente debe “ver”)
+      ui: {
+        photosCount,
+        extraIgnored,
+        hasGeo,
+        hasResults,
+
+        // botones/acciones (disponibilidad)
+        canAnalyze: photosCount > 0,
+        canExportGeneralPdf: hasResults,
+
+        // ocupados (para responder: “espera, está analizando…”)
+        busyAnalyze,
+        busyGeneralPdf,
+        busyMineralPdf,
+
+        // avisos
+        toast: toast || null,
+      },
+
+      // Resultados (resumen + top)
       results: {
         globalCount: globalResults.length,
-        globalTop: globalResults.slice(0, 6).map((r) => ({ name: r.name, pct: r.pct })),
+        globalTop: globalResults.slice(0, 8).map((r) => ({ name: r.name, pct: r.pct })),
         perImageCount: perImage.length,
         excludedCount: excluded.length,
       },
 
+      // Geo / geología
       geo: geo?.point
         ? {
             lat: geo.point.lat,
             lng: geo.point.lng,
-            countryCode: (geo as any)?.countryCode || (geo as any)?.country || (geo as any)?.point?.country || null,
+            countryCode:
+              (geo as any)?.countryCode ||
+              (geo as any)?.country ||
+              (geo as any)?.point?.country ||
+              null,
           }
         : null,
 
       geologyContext: geologyContext || null,
 
+      // Nearby
       nearby: {
         found: nearbyItems.length,
         selected: nearbySelected.length,
       },
+
+      // Interpretación (si existe)
+      interpretation: interpretation
+        ? {
+            geology: interpretation.geology,
+            economics: interpretation.economics,
+            caveats: interpretation.caveats,
+          }
+        : null,
+
+      // ===== Modal "Ficha mineral" (para que el asistente lo entienda) =====
+      mineralFicha: modalOpen
+        ? {
+            open: true,
+            loadingInfo: !!loadingInfo,
+            mineral: modalMineral
+              ? {
+                  name: modalMineral.name,
+                  pct: modalMineral.pct,
+                  confidence: (modalMineral as any)?.confidence ?? null,
+                  evidence: (modalMineral as any)?.evidence ?? null,
+                }
+              : null,
+            info: modalInfo
+              ? {
+                  nombre: modalInfo.nombre ?? null,
+                  formula: modalInfo.formula ?? null,
+                  sistema: modalInfo.sistema ?? null,
+                  mohs: modalInfo.mohs ?? null,
+                  densidad: modalInfo.densidad ?? null,
+                  habito: modalInfo.habito ?? null,
+                  ocurrencia: modalInfo.ocurrencia ?? null,
+                  notas: modalInfo.notas ?? null,
+                }
+              : null,
+            actions: [
+              "Cerrar ficha",
+              "Generar PDF Mineral",
+              "Explicar campos (Mohs, densidad, hábito)",
+            ],
+          }
+        : { open: false },
     };
   }, [
+    photos,
     sampleCode,
     currency,
     usdToPen,
     eurToPen,
+
+    adj, // ✅ NEW (para processAdjPreview)
+
+    prices, // ✅ NEW (para econTopPreview)
+    payables, // ✅ NEW (para econTopPreview)
+    econTopPreview, // ✅ NEW
+
     globalResults,
     perImage,
     excluded,
+
     geo,
     geologyContext,
+
     nearbyItems,
     nearbySelected,
+
+    interpretation,
+
+    modalOpen,
+    modalMineral,
+    modalInfo,
+    loadingInfo,
+
+    busyAnalyze,
+    busyGeneralPdf,
+    busyMineralPdf,
+
+    toast,
   ]);
 
   return (
@@ -1096,11 +1273,18 @@ export default function AnalisisPage() {
                                 const raw = Number(e.target.value || 0);
                                 let priceInUSD = raw;
 
-                                if (currency === "PEN") priceInUSD = raw / usdToPen;
+                                // ✅ FIX: evita división por 0
+                                const safeUsdToPen = usdToPen > 0 ? usdToPen : 0;
+                                const safeEurToPen = eurToPen > 0 ? eurToPen : 0;
+
+                                if (currency === "PEN") {
+                                  priceInUSD = safeUsdToPen > 0 ? raw / safeUsdToPen : 0;
+                                }
 
                                 if (currency === "EUR") {
-                                  const usdToEur = usdToPen / eurToPen;
-                                  priceInUSD = raw / usdToEur;
+                                  const usdToEur =
+                                    safeUsdToPen > 0 && safeEurToPen > 0 ? safeUsdToPen / safeEurToPen : 0;
+                                  priceInUSD = usdToEur > 0 ? raw / usdToEur : 0;
                                 }
 
                                 setPrices((p) => ({ ...p, [cfg.code]: priceInUSD }));
@@ -1498,12 +1682,35 @@ export default function AnalisisPage() {
       <AssistantDock
         visibleState={assistantVisibleState}
         uiHints={[
-          "Tomar/Subir fotos",
-          "Obtener ubicación (GPS)",
-          "Analizar",
-          "Buscar yacimientos cercanos",
-          "Interpretación",
-          "PDF general",
+          photos.length
+            ? `📸 Fotos cargadas: ${photos.length}${extra > 0 ? ` (se analizarán 6, sobran ${extra})` : ""}`
+            : "📸 Paso 1: toma o sube fotos (máx. 6).",
+
+          geo?.point
+            ? `📍 GPS listo: ${geo.point.lat.toFixed(5)}, ${geo.point.lng.toFixed(5)}`
+            : "📍 Paso 2: obtén ubicación (GPS) para mapa y yacimientos.",
+
+          globalResults.length
+            ? `✅ Resultados listos: ${globalResults.length} minerales en mezcla global`
+            : "🧪 Paso 3: presiona “Analizar” cuando tengas fotos.",
+
+          nearbyItems.length
+            ? `🗺️ Yacimientos encontrados: ${nearbyItems.length} (incluidos: ${nearbySelected.length})`
+            : "🗺️ Opcional: buscar yacimientos cercanos (requiere GPS).",
+
+          interpretation
+            ? "🧠 Interpretación: disponible (Geología/Economía/Advertencias)."
+            : globalResults.length
+            ? "🧠 Interpretación: se generará automáticamente tras el análisis."
+            : "🧠 Interpretación: aparecerá después de analizar.",
+
+          globalResults.length
+            ? "📄 PDF general: botón verde “PDF general” (junto a Analizar)."
+            : "📄 PDF general: se habilita cuando haya resultados.",
+
+          modalOpen
+            ? "📄 Ficha mineral: ventana abierta (puedes generar “PDF Mineral”)."
+            : "📄 Ficha mineral: botón “Ficha” en cada mineral (mezcla global).",
         ]}
         compact
       />

@@ -1,4 +1,3 @@
-// components/assistant/AssistantDock.tsx
 "use client";
 
 import React from "react";
@@ -7,24 +6,11 @@ import LightAvatar from "./LightAvatar";
 import { useVoice } from "./useVoice";
 
 type ChatMsg = { role: "user" | "assistant"; content: string };
+type AssistantMode = "app" | "academic";
 
 type AssistantDockProps = {
-  /**
-   * Si quieres pasar “contexto visible” desde una página específica (opcional),
-   * puedes renderizar <AssistantDock visibleState={...} />
-   *
-   * Si NO lo pasas, igual funciona solo con pathname.
-   */
   visibleState?: Record<string, any> | null;
-
-  /**
-   * Hints opcionales (ej: labels de UI) para ayudar a explicar mejor.
-   */
   uiHints?: string[];
-
-  /**
-   * Render en modo compacto (opcional).
-   */
   compact?: boolean;
 };
 
@@ -33,12 +19,13 @@ type ApiAssistantResponse = {
   outOfScope: boolean;
   reason?: string;
   reply: string;
-  debug?: { modelUsed?: string };
+  debug?: { modelUsed?: string; via?: string; modeResolved?: string; pathname?: string | null };
 };
 
 const LS_ENABLED = "mq_assistant_enabled_v1";
 const LS_TTS = "mq_assistant_tts_v1";
 const LS_OPEN = "mq_assistant_open_v1";
+const LS_MODE = "mq_assistant_mode_v1"; // "app" | "academic"
 
 function safeTrim(s: string) {
   return String(s || "").replace(/\s+/g, " ").trim();
@@ -47,6 +34,30 @@ function safeTrim(s: string) {
 function clampHistory(arr: ChatMsg[], max = 8) {
   if (!Array.isArray(arr)) return [];
   return arr.slice(-max);
+}
+
+// ✅ Captura texto visible de la pantalla para que el backend “lea” la app (fallback)
+function readScreenText(maxChars = 2800): string {
+  try {
+    if (typeof window === "undefined" || typeof document === "undefined") return "";
+    const main = document.querySelector("main");
+    const src = main ? (main as HTMLElement).innerText : document.body?.innerText || "";
+    const cleaned = safeTrim(src);
+    if (!cleaned) return "";
+    return cleaned.length > maxChars ? cleaned.slice(0, maxChars) + "…(recortado)" : cleaned;
+  } catch {
+    return "";
+  }
+}
+
+// ✅ Si /analisis ya manda screenText “inteligente”, úsalo primero
+function pickBestScreenText(
+  fromVisibleState: any,
+  fromDomCapture: string
+): string {
+  const vsText = safeTrim(fromVisibleState?.screenText || "");
+  if (vsText) return vsText;
+  return safeTrim(fromDomCapture || "");
 }
 
 export default function AssistantDock({
@@ -60,6 +71,8 @@ export default function AssistantDock({
   const [open, setOpen] = React.useState<boolean>(true);
   const [ttsOn, setTtsOn] = React.useState<boolean>(false);
 
+  const [mode, setMode] = React.useState<AssistantMode>("app");
+
   const [input, setInput] = React.useState<string>("");
   const [busy, setBusy] = React.useState<boolean>(false);
 
@@ -71,7 +84,19 @@ export default function AssistantDock({
     },
   ]);
 
-  // --- Voz (STT/TTS) (solo si enabled)
+  // ✅ Ref para auto-scroll al final
+  const endRef = React.useRef<HTMLDivElement | null>(null);
+
+  // ✅ Ref para evitar “stale state” al construir history
+  const messagesRef = React.useRef<ChatMsg[]>(messages);
+  React.useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  // ✅ Texto visible capturado (fallback DOM)
+  const [screenTextDom, setScreenTextDom] = React.useState<string>("");
+
+  // --- Voz (STT/TTS)
   const voice = useVoice({
     lang: "es-PE",
     interimResults: true,
@@ -84,10 +109,12 @@ export default function AssistantDock({
       const e = localStorage.getItem(LS_ENABLED);
       const o = localStorage.getItem(LS_OPEN);
       const t = localStorage.getItem(LS_TTS);
+      const m = localStorage.getItem(LS_MODE);
 
       if (e != null) setEnabled(e === "1");
       if (o != null) setOpen(o === "1");
       if (t != null) setTtsOn(t === "1");
+      if (m === "academic" || m === "app") setMode(m);
     } catch {}
   }, []);
 
@@ -110,6 +137,56 @@ export default function AssistantDock({
     } catch {}
   }, [ttsOn]);
 
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(LS_MODE, mode);
+    } catch {}
+  }, [mode]);
+
+  // ✅ Capturar screenText DOM cuando:
+  // - cambia la ruta
+  // - se abre el dock
+  // - se habilita el asistente
+  React.useEffect(() => {
+    if (!enabled) {
+      setScreenTextDom("");
+      return;
+    }
+    if (!open) return;
+
+    const t = window.setTimeout(() => {
+      setScreenTextDom(readScreenText(2800));
+    }, 120);
+
+    return () => window.clearTimeout(t);
+  }, [pathname, open, enabled]);
+
+  // ✅ NUEVO: re-captura cuando cambia visibleState (ej: después de Analizar/GPS/nearby)
+  // Esto es CLAVE para que el asistente sepa en qué etapa estás.
+  React.useEffect(() => {
+    if (!enabled || !open) return;
+
+    const t = window.setTimeout(() => {
+      setScreenTextDom(readScreenText(2800));
+    }, 120);
+
+    return () => window.clearTimeout(t);
+  }, [
+    enabled,
+    open,
+    // “firma” mínima para detectar cambios sin hacer stringify gigante
+    visibleState?.results?.globalCount,
+    visibleState?.results?.perImageCount,
+    visibleState?.results?.excludedCount,
+    visibleState?.ui?.photosCount,
+    visibleState?.ui?.hasGeo,
+    visibleState?.ui?.hasResults,
+    visibleState?.nearby?.found,
+    visibleState?.nearby?.selected,
+    visibleState?.stepHint,
+    visibleState?.sampleCode,
+  ]);
+
   // Si llega transcript (STT), lo volcamos al input (sin auto-enviar)
   React.useEffect(() => {
     const t = safeTrim(voice.state.lastTranscript);
@@ -129,6 +206,11 @@ export default function AssistantDock({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
 
+  // ✅ Auto-scroll cuando cambian los mensajes o cuando entra busy
+  React.useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, busy]);
+
   async function sendMessage(raw: string) {
     const text = safeTrim(raw);
     if (!text) return;
@@ -146,21 +228,34 @@ export default function AssistantDock({
 
     setBusy(true);
 
-    // 1) Agregar mensaje usuario
+    // 1) Añadimos el mensaje del usuario
     setMessages((prev) => prev.concat({ role: "user", content: text }));
 
     try {
-      const history = clampHistory(
-        // ojo: aquí todavía no está el setMessages aplicado; armamos manualmente
-        [...messages, { role: "user", content: text }],
-        8
-      );
+      // ✅ history consistente
+      const base = messagesRef.current || [];
+      const history = clampHistory([...base, { role: "user", content: text }], 8);
+
+      // ✅ Prioriza screenText del /analisis/page.tsx (visibleState.screenText)
+      const finalScreenText = pickBestScreenText(visibleState, screenTextDom);
+
+      // ✅ Construir visibleState FINAL
+      const mergedVisibleState = {
+        ...(visibleState ?? {}),
+        // info de pantalla
+        pathname: pathname || null,
+        // usamos el mejor screenText (no pisamos el del page si existe)
+        screenText: finalScreenText,
+        // además enviamos el DOM capturado por si quieres depurar
+        screenTextDom: safeTrim(screenTextDom || ""),
+      };
 
       const body = {
         message: text,
+        mode,
         pathname: pathname || null,
         uiHints: uiHints ?? null,
-        visibleState: visibleState ?? null,
+        visibleState: mergedVisibleState,
         history,
       };
 
@@ -170,19 +265,24 @@ export default function AssistantDock({
         body: JSON.stringify(body),
       });
 
-      const data = (await resp.json()) as ApiAssistantResponse;
+      const data = (await resp.json().catch(() => null)) as ApiAssistantResponse | null;
 
       if (!resp.ok || !data?.reply) {
-        throw new Error("Respuesta inválida del asistente.");
+        setMessages((prev) =>
+          prev.concat({
+            role: "assistant",
+            content:
+              "Ahora mismo la IA no está disponible. " +
+              "Puedo ayudarte igual: dime qué botón ves en pantalla o qué acción quieres realizar.",
+          })
+        );
+        return;
       }
 
       const reply = safeTrim(data.reply);
-
       setMessages((prev) => prev.concat({ role: "assistant", content: reply }));
 
-      // TTS opcional
       if (ttsOn && voice.state.ttsSupported) {
-        // Solo si NO está out of scope? Igual puede hablar, pero lo dejamos simple:
         voice.speak(reply);
       }
     } catch (e: any) {
@@ -210,9 +310,14 @@ export default function AssistantDock({
   const canUseMic = enabled && voice.state.sttSupported;
   const canUseTts = enabled && voice.state.ttsSupported;
 
-  // UI sizes
   const dockWidth = compact ? "w-[320px]" : "w-[360px]";
   const dockMaxH = compact ? "max-h-[420px]" : "max-h-[520px]";
+  const bodyMaxH = compact ? 260 : 320;
+
+  const modeLabel = mode === "academic" ? "Académico" : "APP";
+
+  // ✅ mejor indicador: si el page.tsx ya manda screenText, cuenta como OK
+  const hasScreenText = !!safeTrim(visibleState?.screenText || "") || !!safeTrim(screenTextDom);
 
   return (
     <div className="fixed right-4 bottom-4 z-[9999]">
@@ -249,6 +354,7 @@ export default function AssistantDock({
             dockWidth,
             dockMaxH,
             "rounded-2xl shadow-xl border bg-white overflow-hidden",
+            "flex flex-col",
           ].join(" ")}
         >
           {/* Header */}
@@ -265,37 +371,38 @@ export default function AssistantDock({
               <div className="text-sm font-semibold leading-tight">
                 Asistente MinQuant_WSCA
               </div>
+
               <div className="text-[11px] opacity-90 truncate">
                 {pathname ? `Página: ${pathname}` : "Página: (sin ruta)"}
               </div>
 
+              <div className="text-[11px] opacity-95">
+                Modo: <b>{modeLabel}</b>{" "}
+                <span className="opacity-90">
+                  · Lectura pantalla: <b>{enabled ? (hasScreenText ? "OK" : "…") : "OFF"}</b>
+                </span>
+              </div>
+
               {!enabled && (
-                <div className="text-[11px] opacity-95">
-                  OFF: no IA, no micrófono.
-                </div>
+                <div className="text-[11px] opacity-95">OFF: no IA, no micrófono.</div>
               )}
             </div>
           </div>
 
           {/* Body chat */}
-          <div className="px-3 py-3 overflow-y-auto" style={{ maxHeight: compact ? 260 : 320 }}>
+          <div className="px-3 py-3 overflow-y-auto flex-1" style={{ maxHeight: bodyMaxH }}>
             <div className="space-y-2">
               {messages.map((m, idx) => {
                 const isUser = m.role === "user";
                 return (
                   <div
                     key={idx}
-                    className={[
-                      "flex",
-                      isUser ? "justify-end" : "justify-start",
-                    ].join(" ")}
+                    className={["flex", isUser ? "justify-end" : "justify-start"].join(" ")}
                   >
                     <div
                       className={[
                         "max-w-[85%] rounded-2xl px-3 py-2 text-sm leading-snug",
-                        isUser
-                          ? "bg-sky-600 text-white"
-                          : "bg-gray-100 text-gray-900",
+                        isUser ? "bg-sky-600 text-white" : "bg-gray-100 text-gray-900",
                       ].join(" ")}
                     >
                       {m.content}
@@ -311,64 +418,93 @@ export default function AssistantDock({
                   </div>
                 </div>
               )}
+
+              <div ref={endRef} />
             </div>
 
-            {/* Errors voz */}
             {voice.state.lastError && (
               <div className="mt-3 text-xs text-red-600">
                 Voz: {voice.state.lastError}{" "}
-                <button
-                  type="button"
-                  className="underline"
-                  onClick={() => voice.clearError()}
-                >
+                <button type="button" className="underline" onClick={() => voice.clearError()}>
                   ok
                 </button>
               </div>
             )}
           </div>
 
-          {/* Footer controls */}
-          <div className="border-t px-3 py-3 bg-white">
-            {/* Voice toggles row */}
+          {/* Footer */}
+          <div className="border-t px-3 py-3 bg-white shrink-0">
             <div className="flex items-center justify-between gap-2 mb-2">
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={!canUseMic || busy}
-                  onClick={() => {
-                    if (!canUseMic) return;
-                    if (voice.state.listening) voice.stopListening();
-                    else voice.startListening();
-                  }}
-                  className={[
-                    "px-3 py-1 rounded-full text-xs border",
-                    canUseMic && !busy
-                      ? "bg-white hover:bg-gray-50"
-                      : "bg-gray-100 text-gray-400",
-                  ].join(" ")}
-                  title={
-                    voice.state.sttSupported
-                      ? "Micrófono (STT)"
-                      : "STT no soportado"
-                  }
-                >
-                  {voice.state.listening ? "🎙️ Escuchando…" : "🎙️ Hablar"}
-                </button>
+                <div className="inline-flex rounded-full overflow-hidden border bg-white">
+                  <button
+                    type="button"
+                    disabled={!enabled || busy}
+                    onClick={() => {
+                      setMode("app");
+                      setMessages((prev) =>
+                        prev.concat({
+                          role: "assistant",
+                          content: "✅ Modo cambiado a APP (ayuda dentro de la app).",
+                        })
+                      );
+                    }}
+                    className={[
+                      "px-3 py-1 text-xs",
+                      mode === "app" ? "bg-emerald-600 text-white" : "bg-white text-gray-700",
+                      !enabled || busy ? "opacity-50 cursor-not-allowed" : "hover:bg-gray-50",
+                    ].join(" ")}
+                    title="Modo APP"
+                  >
+                    APP
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={!enabled || busy}
+                    onClick={() => {
+                      setMode("academic");
+                      setMessages((prev) =>
+                        prev.concat({
+                          role: "assistant",
+                          content:
+                            "✅ Modo cambiado a ACADÉMICO (mineralogía aplicada: mena/ganga, sulfuros/óxidos, payable, etc.).",
+                        })
+                      );
+                    }}
+                    className={[
+                      "px-3 py-1 text-xs",
+                      mode === "academic" ? "bg-sky-600 text-white" : "bg-white text-gray-700",
+                      !enabled || busy ? "opacity-50 cursor-not-allowed" : "hover:bg-gray-50",
+                    ].join(" ")}
+                    title="Modo Académico"
+                  >
+                    ACADÉMICO
+                  </button>
+                </div>
 
                 <button
                   type="button"
-                  disabled={!enabled || !voice.state.speaking}
-                  onClick={() => voice.cancelSpeak()}
+                  disabled={!enabled || busy}
+                  onClick={() => {
+                    try {
+                      localStorage.removeItem(LS_MODE);
+                    } catch {}
+                    setMode("app");
+                    setMessages((prev) =>
+                      prev.concat({
+                        role: "assistant",
+                        content: "🔄 Reset: modo APP activado (y se borró el modo guardado).",
+                      })
+                    );
+                  }}
                   className={[
                     "px-3 py-1 rounded-full text-xs border",
-                    enabled && voice.state.speaking
-                      ? "bg-white hover:bg-gray-50"
-                      : "bg-gray-100 text-gray-400",
+                    !enabled || busy ? "bg-gray-100 text-gray-400" : "bg-white hover:bg-gray-50",
                   ].join(" ")}
-                  title="Detener voz"
+                  title="Borra el modo guardado y vuelve a APP"
                 >
-                  🔇 Stop
+                  Reset a APP
                 </button>
               </div>
 
@@ -383,14 +519,49 @@ export default function AssistantDock({
               </label>
             </div>
 
-            {/* Input */}
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={!canUseMic || busy}
+                  onClick={() => {
+                    if (!canUseMic) return;
+                    if (voice.state.listening) voice.stopListening();
+                    else voice.startListening();
+                  }}
+                  className={[
+                    "px-3 py-1 rounded-full text-xs border",
+                    canUseMic && !busy ? "bg-white hover:bg-gray-50" : "bg-gray-100 text-gray-400",
+                  ].join(" ")}
+                  title={voice.state.sttSupported ? "Micrófono (STT)" : "STT no soportado"}
+                >
+                  {voice.state.listening ? "🎙️ Escuchando…" : "🎙️ Hablar"}
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!enabled || !voice.state.speaking}
+                  onClick={() => voice.cancelSpeak()}
+                  className={[
+                    "px-3 py-1 rounded-full text-xs border",
+                    enabled && voice.state.speaking ? "bg-white hover:bg-gray-50" : "bg-gray-100 text-gray-400",
+                  ].join(" ")}
+                  title="Detener voz"
+                >
+                  🔇 Stop
+                </button>
+              </div>
+            </div>
+
             <form onSubmit={onSubmit} className="flex items-center gap-2">
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={
                   enabled
-                    ? "Pregunta sobre MinQuant_WSCA…"
+                    ? mode === "academic"
+                      ? "Pregunta académica (mineralogía) o del app…"
+                      : "Pregunta sobre MinQuant_WSCA…"
                     : "Asistente en OFF…"
                 }
                 disabled={!enabled || busy}
@@ -407,7 +578,9 @@ export default function AssistantDock({
             </form>
 
             <div className="mt-2 text-[11px] text-gray-500">
-              Este asistente responde solo sobre el uso de MinQuant_WSCA.
+              {mode === "academic"
+                ? "Modo académico: mineralogía y conceptos técnicos (sin salir del dominio MinQuant)."
+                : "Modo APP: ayuda sobre pantallas, botones, resultados y PDF de MinQuant_WSCA."}
             </div>
           </div>
         </div>

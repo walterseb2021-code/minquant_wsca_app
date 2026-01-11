@@ -2,6 +2,7 @@
 
 import React from "react";
 import { useRouter } from "next/navigation";
+import AssistantDock from "@/components/assistant/AssistantDock";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -45,6 +46,50 @@ export default function LoginPage() {
       setLoading(false);
     }
   }
+
+  // ===================== ASISTENTE: contexto específico de /login =====================
+  const assistantVisibleState = React.useMemo(() => {
+    const cleanId = userId.trim().toUpperCase();
+    return {
+      screen: "login",
+      title: "Inicio de sesión",
+      description:
+        "Pantalla para ingresar al sistema con ID de usuario (U000–U040) y contraseña (ej. MQ-0001).",
+      fields: {
+        userId: {
+          label: "ID de usuario",
+          expectedFormat: "U001, U002, ... (U000–U040)",
+          currentValue: cleanId || null,
+          filled: Boolean(cleanId),
+        },
+        password: {
+          label: "Contraseña",
+          expectedFormat: "MQ-0001, MQ-0002, ...",
+          filled: Boolean(password.trim()),
+          visibility: showPassword ? "visible" : "oculta",
+        },
+      },
+      status: {
+        loading,
+        hasError: Boolean(error),
+        errorMessage: error || null,
+      },
+      actions: [
+        {
+          label: "Iniciar sesión",
+          when: "Cuando el ID y la contraseña estén completos",
+        },
+        {
+          label: showPassword ? "Ocultar contraseña" : "Ver contraseña",
+          when: "Si necesitas revisar lo escrito",
+        },
+      ],
+      notes: [
+        "Todo se convierte automáticamente a MAYÚSCULAS.",
+        "Ejemplo: U001 / MQ-0001.",
+      ],
+    };
+  }, [userId, password, showPassword, loading, error]);
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-50 flex items-center justify-center px-4">
@@ -118,6 +163,18 @@ export default function LoginPage() {
           Si eres administrador, usa tus credenciales privadas.
         </p>
       </div>
+
+      {/* Asistente con contexto real de /login */}
+      <AssistantDock
+        visibleState={assistantVisibleState}
+        uiHints={[
+          "Ingresa ID: U000–U040 (ej: U001)",
+          "Ingresa contraseña: MQ-0001 (ejemplo)",
+          "Puedes usar 'Ver' para revisar",
+          "Pulsa 'Iniciar sesión'",
+        ]}
+        compact
+      />
     </main>
   );
 }
