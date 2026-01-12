@@ -1,4 +1,3 @@
-// components/assistant/AssistantDock.tsx
 "use client";
 
 import React from "react";
@@ -27,18 +26,54 @@ const LS_ENABLED = "mq_assistant_enabled_v1";
 const LS_TTS = "mq_assistant_tts_v1";
 const LS_OPEN = "mq_assistant_open_v1";
 const LS_MODE = "mq_assistant_mode_v1"; // "app" | "academic"
-
-// ✅ NEW: draggable + mini bubble
-const LS_POS = "mq_assistant_pos_v1";
+const LS_POS = "mq_assistant_pos_v1"; // {"x":number,"y":number}
 const LS_MINI = "mq_assistant_mini_v1";
+
+type DockPos = { x: number; y: number };
 
 function safeTrim(s: string) {
   return String(s || "").replace(/\s+/g, " ").trim();
 }
 
-function clampHistory(arr: ChatMsg[], max = 8) {
-  if (!Array.isArray(arr)) return [];
-  return arr.slice(-max);
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function getDefaultPos(): DockPos {
+  // esquina inferior derecha por defecto (burbuja ~72px, margen 16)
+  if (typeof window === "undefined") return { x: 16, y: 16 };
+  const w = window.innerWidth || 360;
+  const h = window.innerHeight || 640;
+  return { x: Math.max(16, w - 16 - 72), y: Math.max(16, h - 16 - 72) };
+}
+
+function readSavedPos(): DockPos | null {
+  try {
+    const raw = localStorage.getItem(LS_POS);
+    if (!raw) return null;
+    const j = JSON.parse(raw);
+    if (typeof j?.x === "number" && typeof j?.y === "number") return { x: j.x, y: j.y };
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function savePos(p: DockPos) {
+  try {
+    localStorage.setItem(LS_POS, JSON.stringify(p));
+  } catch {}
+}
+
+function clampPos(pos: DockPos, w: number, h: number): DockPos {
+  if (typeof window === "undefined") return pos;
+  const margin = 8;
+  const maxX = Math.max(margin, window.innerWidth - w - margin);
+  const maxY = Math.max(margin, window.innerHeight - h - margin);
+  return {
+    x: clamp(pos.x, margin, maxX),
+    y: clamp(pos.y, margin, maxY),
+  };
 }
 
 // ✅ Captura texto visible de la pantalla para que el backend “lea” la app
@@ -55,27 +90,9 @@ function readScreenText(maxChars = 2800): string {
   }
 }
 
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
-}
-
-type DockPos = { x: number; y: number };
-
-// ✅ default: esquina inferior derecha (con offset)
-function getDefaultPos(): DockPos {
-  if (typeof window === "undefined") return { x: 16, y: 16 };
-  return { x: 16, y: 16 };
-}
-
-function clampPos(pos: DockPos, w: number, h: number): DockPos {
-  if (typeof window === "undefined") return pos;
-  const margin = 8;
-  const maxX = Math.max(margin, window.innerWidth - w - margin);
-  const maxY = Math.max(margin, window.innerHeight - h - margin);
-  return {
-    x: clamp(pos.x, margin, maxX),
-    y: clamp(pos.y, margin, maxY),
-  };
+function clampHistory(arr: ChatMsg[], max = 8) {
+  if (!Array.isArray(arr)) return [];
+  return arr.slice(-max);
 }
 
 export default function AssistantDock({
@@ -85,8 +102,15 @@ export default function AssistantDock({
 }: AssistantDockProps) {
   const pathname = usePathname();
 
+  // --- UI sizes
+  const dockWidthPx = compact ? 320 : 360;
+  const dockMaxHPx = compact ? 420 : 520;
+  const bubbleSize = 72; // burbuja mini
+
+  // --- Estado principal
   const [enabled, setEnabled] = React.useState<boolean>(true);
-  const [open, setOpen] = React.useState<boolean>(true); // open = panel abierto
+  const [open, setOpen] = React.useState<boolean>(true);
+  const [mini, setMini] = React.useState<boolean>(false);
   const [ttsOn, setTtsOn] = React.useState<boolean>(false);
   const [mode, setMode] = React.useState<AssistantMode>("app");
 
@@ -101,16 +125,16 @@ export default function AssistantDock({
     },
   ]);
 
-  // ✅ Ref para auto-scroll al final
+  // refs
   const endRef = React.useRef<HTMLDivElement | null>(null);
-
-  // ✅ Ref para evitar “stale state” al construir history
   const messagesRef = React.useRef<ChatMsg[]>(messages);
   React.useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
 
-  // ✅ Texto visible capturado (para mandar al backend)
+  const dockRef = React.useRef<HTMLDivElement | null>(null);
+
+  // --- Texto visible capturado (para mandar al backend)
   const [screenText, setScreenText] = React.useState<string>("");
 
   // --- Voz (STT/TTS)
@@ -121,84 +145,123 @@ export default function AssistantDock({
   });
 
   // =======================
-  // ✅ DRAG + MINI BUBBLE
+  // ✅ DRAG (Pointer events) PC + móvil
   // =======================
-  const dockWidthPx = compact ? 320 : 360;
-  const dockMaxHPx = compact ? 420 : 520;
-
-  const bubbleSize = 72; // px aprox (avatar + padding)
-
-  const [mini, setMini] = React.useState<boolean>(false);
-
   const [pos, setPos] = React.useState<DockPos>(() => getDefaultPos());
-  const draggingRef = React.useRef(false);
-  const dragStartRef = React.useRef<{
-    mouseX: number;
-    mouseY: number;
+  const dragRef = React.useRef<{
+    active: boolean;
+    pointerId: number | null;
+    dx: number;
+    dy: number;
     startX: number;
     startY: number;
-  } | null>(null);
+    moved: boolean;
+  }>({ active: false, pointerId: null, dx: 0, dy: 0, startX: 0, startY: 0, moved: false });
 
-  // tamaño “actual” para clamping (panel o burbuja)
-  const currentW = mini ? bubbleSize : dockWidthPx;
-  const currentH = mini ? bubbleSize : dockMaxHPx;
+  function getCurrentSize(): { w: number; h: number } {
+    // intentamos medir real, si no, aproximamos
+    const rect = dockRef.current?.getBoundingClientRect();
+    if (rect && rect.width && rect.height) return { w: rect.width, h: rect.height };
 
-  function startDrag(e: React.MouseEvent) {
-    if (e.button !== 0) return;
-    draggingRef.current = true;
-    dragStartRef.current = {
-      mouseX: e.clientX,
-      mouseY: e.clientY,
-      startX: pos.x,
-      startY: pos.y,
+    // fallback por modo
+    if (mini) return { w: bubbleSize, h: bubbleSize };
+    if (!open) return { w: 180, h: 48 }; // botón “Abrir asistente”
+    return { w: dockWidthPx, h: dockMaxHPx };
+  }
+
+  function setPosClamped(next: DockPos) {
+    const { w, h } = getCurrentSize();
+    const clamped = clampPos(next, w, h);
+    setPos(clamped);
+    savePos(clamped);
+  }
+
+  function onPointerDownDrag(e: React.PointerEvent) {
+    if (!enabled) return;
+
+    // Evita scroll/zoom mientras arrastras
+    e.preventDefault();
+
+    const el = e.currentTarget as any;
+
+    dragRef.current.active = true;
+    dragRef.current.pointerId = e.pointerId;
+    dragRef.current.dx = e.clientX - pos.x;
+    dragRef.current.dy = e.clientY - pos.y;
+    dragRef.current.startX = e.clientX;
+    dragRef.current.startY = e.clientY;
+    dragRef.current.moved = false;
+
+    // Captura el puntero (clave en móvil)
+    try {
+      el.setPointerCapture?.(e.pointerId);
+    } catch {}
+
+    document.body.style.userSelect = "none";
+  }
+
+  function onPointerMoveDrag(e: React.PointerEvent) {
+    if (!dragRef.current.active) return;
+    if (dragRef.current.pointerId !== e.pointerId) return;
+
+    e.preventDefault();
+
+    const dist = Math.hypot(e.clientX - dragRef.current.startX, e.clientY - dragRef.current.startY);
+    if (dist > 6) dragRef.current.moved = true;
+
+    const next = {
+      x: e.clientX - dragRef.current.dx,
+      y: e.clientY - dragRef.current.dy,
     };
+    setPosClamped(next);
+  }
+
+  function onPointerUpDrag(e: React.PointerEvent, opts?: { miniTapToOpen?: boolean }) {
+    if (!dragRef.current.active) return;
+    if (dragRef.current.pointerId !== e.pointerId) return;
+
+    e.preventDefault();
+
+    const moved = dragRef.current.moved;
+
+    dragRef.current.active = false;
+    dragRef.current.pointerId = null;
+    dragRef.current.dx = 0;
+    dragRef.current.dy = 0;
+
+    document.body.style.userSelect = "";
+
+    // ✅ Si es mini y fue tap (NO drag), abre
+    if (opts?.miniTapToOpen && !moved) {
+      setMini(false);
+      setOpen(true);
+      window.setTimeout(() => setScreenText(readScreenText(2800)), 80);
+    }
   }
 
   function resetPos() {
     const d = getDefaultPos();
-    setPos(clampPos(d, currentW, currentH));
+    setPosClamped(d);
   }
 
-  // ✅ NEW: listeners globales para drag
-  React.useEffect(() => {
-    function onMove(ev: MouseEvent) {
-      if (!draggingRef.current) return;
-      const s = dragStartRef.current;
-      if (!s) return;
-
-      const dx = ev.clientX - s.mouseX;
-      const dy = ev.clientY - s.mouseY;
-
-      // OJO: pos.x/pos.y son top-left
-      const next = clampPos({ x: s.startX + dx, y: s.startY + dy }, currentW, currentH);
-      setPos(next);
-    }
-
-    function onUp() {
-      if (!draggingRef.current) return;
-      draggingRef.current = false;
-      dragStartRef.current = null;
-    }
-
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-
-    return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-  }, [currentW, currentH]);
-
-  // ✅ Re-clamp al cambiar ventana o modo mini/panel
+  // Re-clamp al cambiar tamaño/ventana
   React.useEffect(() => {
     function onResize() {
-      setPos((p) => clampPos(p, currentW, currentH));
+      setPos((p) => {
+        const { w, h } = getCurrentSize();
+        const clamped = clampPos(p, w, h);
+        savePos(clamped);
+        return clamped;
+      });
     }
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [currentW, currentH]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mini, open, compact]);
 
-  // Cargar prefs de localStorage
+  // =======================
+  // ✅ Cargar prefs (LS)
+  // =======================
   React.useEffect(() => {
     try {
       const e = localStorage.getItem(LS_ENABLED);
@@ -213,19 +276,12 @@ export default function AssistantDock({
       if (m === "academic" || m === "app") setMode(m);
       if (mn != null) setMini(mn === "1");
 
-      // posición
-      const p = localStorage.getItem(LS_POS);
-      if (p) {
-        const parsed = JSON.parse(p) as DockPos;
-        if (typeof parsed?.x === "number" && typeof parsed?.y === "number") {
-          // clampa con el tamaño actual (mini o panel)
-          const w = (mn === "1") ? bubbleSize : dockWidthPx;
-          const h = (mn === "1") ? bubbleSize : dockMaxHPx;
-          setPos(clampPos(parsed, w, h));
-        }
-      }
-    } catch {}
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      const savedPos = readSavedPos();
+      if (savedPos) setPos(savedPos);
+      else setPos(getDefaultPos());
+    } catch {
+      setPos(getDefaultPos());
+    }
   }, []);
 
   // Persistir prefs
@@ -259,22 +315,13 @@ export default function AssistantDock({
     } catch {}
   }, [mini]);
 
-  React.useEffect(() => {
-    try {
-      localStorage.setItem(LS_POS, JSON.stringify(pos));
-    } catch {}
-  }, [pos]);
-
-  // ✅ Capturar screenText cuando:
-  // - cambia la ruta
-  // - se abre el dock
-  // - se habilita el asistente
+  // ✅ Capturar screenText cuando cambia la ruta / se abre / enabled
   React.useEffect(() => {
     if (!enabled) {
       setScreenText("");
       return;
     }
-    if (mini) return; // en mini no hace falta refrescar screenText a cada cambio
+    if (mini) return;
     if (!open) return;
 
     const t = window.setTimeout(() => {
@@ -284,7 +331,7 @@ export default function AssistantDock({
     return () => window.clearTimeout(t);
   }, [pathname, open, enabled, mini]);
 
-  // Si llega transcript (STT), lo volcamos al input (sin auto-enviar)
+  // Si llega transcript (STT), lo volcamos al input
   React.useEffect(() => {
     const t = safeTrim(voice.state.lastTranscript);
     if (!t) return;
@@ -292,7 +339,7 @@ export default function AssistantDock({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voice.state.lastTranscript]);
 
-  // Si deshabilitan el asistente, paramos todo
+  // Si deshabilitan el asistente, paramos voz
   React.useEffect(() => {
     if (!enabled) {
       try {
@@ -303,7 +350,7 @@ export default function AssistantDock({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
 
-  // ✅ Auto-scroll cuando cambian los mensajes o cuando entra busy
+  // Auto-scroll
   React.useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, busy]);
@@ -316,8 +363,7 @@ export default function AssistantDock({
       setMessages((prev) =>
         prev.concat({
           role: "assistant",
-          content:
-            "El asistente está en OFF. Actívalo para que pueda responder dentro de MinQuant_WSCA.",
+          content: "El asistente está en OFF. Actívalo para que pueda responder dentro de MinQuant_WSCA.",
         })
       );
       return;
@@ -358,8 +404,7 @@ export default function AssistantDock({
           prev.concat({
             role: "assistant",
             content:
-              "Ahora mismo la IA no está disponible. " +
-              "Puedo ayudarte igual: dime qué botón ves en pantalla o qué acción quieres realizar.",
+              "Ahora mismo la IA no está disponible. Puedo ayudarte igual: dime qué botón ves en pantalla o qué acción quieres realizar.",
           })
         );
         return;
@@ -375,8 +420,7 @@ export default function AssistantDock({
       setMessages((prev) =>
         prev.concat({
           role: "assistant",
-          content:
-            "Tuve un error al responder. Intenta de nuevo o describe qué estás viendo en la pantalla.",
+          content: "Tuve un error al responder. Intenta de nuevo o describe qué estás viendo en la pantalla.",
         })
       );
       console.error("[AssistantDock] error:", e);
@@ -404,43 +448,39 @@ export default function AssistantDock({
   const hasScreenText = !!safeTrim(screenText);
 
   // ==================================================
-  // ✅ MODO MINI (BURBUJA): SOLO AVATAR, draggable
+  // ✅ CONTENEDOR FLOTANTE (siempre)
+  // ==================================================
+  // IMPORTANTÍSIMO: touchAction none aquí ayuda a móvil
+  const containerStyle: React.CSSProperties = {
+    left: pos.x,
+    top: pos.y,
+    touchAction: "none",
+  };
+
+  // ==================================================
+  // ✅ MODO MINI (BURBUJA) draggable + tap abre
   // ==================================================
   if (mini) {
     return (
       <div
-        className="fixed z-[9999]"
-        style={{
-          top: pos.y,
-          left: pos.x,
-          width: bubbleSize,
-          height: bubbleSize,
-        }}
+        ref={dockRef}
+        className="fixed z-[9999] select-none"
+        style={containerStyle}
       >
         <button
           type="button"
-          onMouseDown={startDrag}
-          onClick={() => {
-            // al tocar: abre panel
-            setMini(false);
-            setOpen(true);
-            // refresca screenText al abrir
-            window.setTimeout(() => setScreenText(readScreenText(2800)), 80);
-          }}
-          title="Toca para abrir. Arrastra para mover."
           className={[
-            "w-full h-full rounded-full shadow-xl border bg-white",
+            "w-[72px] h-[72px] rounded-full shadow-xl border bg-white",
             "flex items-center justify-center",
             enabled ? "" : "opacity-70",
           ].join(" ")}
-          style={{ cursor: draggingRef.current ? "grabbing" : "grab" }}
+          title="Toca para abrir. Arrastra para mover."
+          onPointerDown={onPointerDownDrag}
+          onPointerMove={onPointerMoveDrag}
+          onPointerUp={(e) => onPointerUpDrag(e, { miniTapToOpen: true })}
         >
           <div className="pointer-events-none">
-            <LightAvatar
-              size={56}
-              paused={!enabled}
-              energy={enabled ? (busy ? 0.95 : 0.65) : 0}
-            />
+            <LightAvatar size={56} paused={!enabled} energy={enabled ? (busy ? 0.95 : 0.65) : 0} />
           </div>
         </button>
 
@@ -472,16 +512,13 @@ export default function AssistantDock({
   }
 
   // ==================================================
-  // ✅ PANEL NORMAL (draggable desde header)
+  // ✅ PANEL NORMAL (Header draggable)
   // ==================================================
   return (
     <div
+      ref={dockRef}
       className="fixed z-[9999]"
-      style={{
-        top: pos.y,
-        left: pos.x,
-        cursor: draggingRef.current ? "grabbing" : "default",
-      }}
+      style={containerStyle}
     >
       {/* Toggle bar */}
       <div className="flex items-center justify-end gap-2 mb-2">
@@ -490,23 +527,22 @@ export default function AssistantDock({
           onClick={() => setEnabled((v) => !v)}
           className={[
             "px-3 py-1 rounded-full text-xs border shadow-sm",
-            enabled
-              ? "bg-emerald-600 text-white border-emerald-700"
-              : "bg-gray-200 text-gray-700 border-gray-300",
+            enabled ? "bg-emerald-600 text-white border-emerald-700" : "bg-gray-200 text-gray-700 border-gray-300",
           ].join(" ")}
           title="ON/OFF del asistente (OFF = sin IA, sin micrófono)"
         >
           {enabled ? "Asistente: ON" : "Asistente: OFF"}
         </button>
 
-        {/* ✅ NEW: pasar a mini burbuja */}
         <button
           type="button"
           onClick={() => {
             setMini(true);
-            setOpen(true); // el panel se “oculta” por mini, pero open queda true para la próxima apertura
+            setOpen(true);
             // clampa por si cambia el tamaño (panel->burbuja)
-            setPos((p) => clampPos(p, bubbleSize, bubbleSize));
+            const next = clampPos(pos, bubbleSize, bubbleSize);
+            setPos(next);
+            savePos(next);
           }}
           className="px-3 py-1 rounded-full text-xs border bg-white shadow-sm"
           title="Convertir a burbuja (modo mini)"
@@ -546,16 +582,14 @@ export default function AssistantDock({
           {/* Header (DRAG HANDLE) */}
           <div
             className="flex items-center gap-3 px-3 py-3 border-b bg-gradient-to-r from-cyan-600 to-emerald-600 text-white select-none"
-            onMouseDown={startDrag}
             title="Arrastra desde aquí para mover el asistente"
             style={{ cursor: "grab" }}
+            onPointerDown={onPointerDownDrag}
+            onPointerMove={onPointerMoveDrag}
+            onPointerUp={(e) => onPointerUpDrag(e)}
           >
             <div className="shrink-0 pointer-events-none">
-              <LightAvatar
-                size={56}
-                paused={!enabled}
-                energy={enabled ? (busy ? 0.95 : 0.65) : 0}
-              />
+              <LightAvatar size={56} paused={!enabled} energy={enabled ? (busy ? 0.95 : 0.65) : 0} />
             </div>
 
             <div className="min-w-0 pointer-events-none">
@@ -604,7 +638,6 @@ export default function AssistantDock({
               <div ref={endRef} />
             </div>
 
-            {/* Errors voz */}
             {voice.state.lastError && (
               <div className="mt-3 text-xs text-red-600">
                 Voz: {voice.state.lastError}{" "}
@@ -766,15 +799,20 @@ export default function AssistantDock({
         </div>
       )}
 
-      {/* Si el panel se minimiza con “Minimizar” (sin burbuja), dejamos un botón rápido */}
+      {/* Minimizado (sin burbuja): botón draggable */}
       {!open && (
         <button
           type="button"
-          onMouseDown={startDrag}
-          onClick={() => setOpen(true)}
-          className="px-3 py-2 rounded-2xl border bg-white shadow"
-          title="Arrastra para mover. Clic para abrir."
-          style={{ cursor: draggingRef.current ? "grabbing" : "grab" }}
+          className="px-3 py-2 rounded-2xl border bg-white shadow select-none"
+          title="Arrastra para mover. Toca para abrir."
+          style={{ cursor: "grab", touchAction: "none" }}
+          onPointerDown={onPointerDownDrag}
+          onPointerMove={onPointerMoveDrag}
+          onPointerUp={(e) => {
+            onPointerUpDrag(e);
+            // tap abre (si no movió)
+            if (!dragRef.current.moved) setOpen(true);
+          }}
         >
           Abrir asistente
         </button>
