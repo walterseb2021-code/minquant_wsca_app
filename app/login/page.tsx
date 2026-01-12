@@ -2,7 +2,6 @@
 
 import React from "react";
 import { useRouter } from "next/navigation";
-import AssistantDock from "@/components/assistant/AssistantDock";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -164,17 +163,6 @@ export default function LoginPage() {
         </p>
       </div>
 
-      {/* Asistente con contexto real de /login */}
-      <AssistantDock
-        visibleState={assistantVisibleState}
-        uiHints={[
-          "Ingresa ID: U000–U040 (ej: U001)",
-          "Ingresa contraseña: MQ-0001 (ejemplo)",
-          "Puedes usar 'Ver' para revisar",
-          "Pulsa 'Iniciar sesión'",
-        ]}
-        compact
-      />
-    </main>
+         </main>
   );
 }

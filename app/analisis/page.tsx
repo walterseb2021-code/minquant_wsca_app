@@ -21,6 +21,7 @@ import { suggestFromMinerals } from "../../lib/minerals";
 import LogoutButton from "@/components/LogoutButton";
 import AssistantDock from "@/components/assistant/AssistantDock";
 
+
 /* ===================== Helpers ===================== */
 async function fileToDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -1678,49 +1679,48 @@ export default function AnalisisPage() {
         </div>
       )}
 
-      {/* Asistente con contexto real de /analisis */}
-      <AssistantDock
-        visibleState={assistantVisibleState}
-        uiHints={[
-          photos.length
-            ? `📸 Fotos cargadas: ${photos.length}${extra > 0 ? ` (se analizarán 6, sobran ${extra})` : ""}`
-            : "📸 Paso 1: toma o sube fotos (máx. 6).",
-
-          geo?.point
-            ? `📍 GPS listo: ${geo.point.lat.toFixed(5)}, ${geo.point.lng.toFixed(5)}`
-            : "📍 Paso 2: obtén ubicación (GPS) para mapa y yacimientos.",
-
-          globalResults.length
-            ? `✅ Resultados listos: ${globalResults.length} minerales en mezcla global`
-            : "🧪 Paso 3: presiona “Analizar” cuando tengas fotos.",
-
-          nearbyItems.length
-            ? `🗺️ Yacimientos encontrados: ${nearbyItems.length} (incluidos: ${nearbySelected.length})`
-            : "🗺️ Opcional: buscar yacimientos cercanos (requiere GPS).",
-
-          interpretation
-            ? "🧠 Interpretación: disponible (Geología/Economía/Advertencias)."
-            : globalResults.length
-            ? "🧠 Interpretación: se generará automáticamente tras el análisis."
-            : "🧠 Interpretación: aparecerá después de analizar.",
-
-          globalResults.length
-            ? "📄 PDF general: botón verde “PDF general” (junto a Analizar)."
-            : "📄 PDF general: se habilita cuando haya resultados.",
-
-          modalOpen
-            ? "📄 Ficha mineral: ventana abierta (puedes generar “PDF Mineral”)."
-            : "📄 Ficha mineral: botón “Ficha” en cada mineral (mezcla global).",
-        ]}
-        compact
-      />
-
-      {/* Toast (lo subo para que NO choque con el dock) */}
+            {/* Toast (lo subo para que NO choque con el dock) */}
       {toast && (
         <div className="fixed right-4 bottom-24 z-50 bg-black/85 text-white px-4 py-2 rounded shadow">
           {toast}
         </div>
       )}
+      {/* ✅ Asistente con contexto real de /analisis (NO lo pongas dentro de condicionales) */}
+<AssistantDock
+  visibleState={assistantVisibleState}
+  uiHints={[
+    photos.length
+      ? `📸 Fotos cargadas: ${photos.length}${extra > 0 ? ` (se analizarán 6, sobran ${extra})` : ""}`
+      : "📸 Paso 1: toma o sube fotos (máx. 6).",
+
+    geo?.point
+      ? `📍 GPS listo: ${geo.point.lat.toFixed(5)}, ${geo.point.lng.toFixed(5)}`
+      : "📍 Paso 2: obtén ubicación (GPS) para mapa y yacimientos.",
+
+    globalResults.length
+      ? `✅ Resultados listos: ${globalResults.length} minerales en mezcla global`
+      : "🧪 Paso 3: presiona “Analizar” cuando tengas fotos.",
+
+    nearbyItems.length
+      ? `🗺️ Yacimientos encontrados: ${nearbyItems.length} (incluidos: ${nearbySelected.length})`
+      : "🗺️ Opcional: buscar yacimientos cercanos (requiere GPS).",
+
+    interpretation
+      ? "🧠 Interpretación: disponible (Geología/Economía/Advertencias)."
+      : globalResults.length
+      ? "🧠 Interpretación: se generará automáticamente tras el análisis."
+      : "🧠 Interpretación: aparecerá después de analizar.",
+
+    globalResults.length
+      ? "📄 PDF general: botón verde “PDF general” (junto a Analizar)."
+      : "📄 PDF general: se habilita cuando haya resultados.",
+
+    modalOpen
+      ? "📄 Ficha mineral: ventana abierta (puedes generar “PDF Mineral”)."
+      : "📄 Ficha mineral: botón “Ficha” en cada mineral (mezcla global).",
+  ]}
+  compact
+/>
     </main>
   );
 }

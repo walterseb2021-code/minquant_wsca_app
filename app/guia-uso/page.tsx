@@ -2,7 +2,6 @@
 
 import React from "react";
 import Link from "next/link";
-import AssistantDock from "@/components/assistant/AssistantDock";
 
 export default function GuiaUsoPage() {
   // ✅ Contexto visible para que el asistente "entienda" qué es esta pantalla
@@ -329,17 +328,6 @@ export default function GuiaUsoPage() {
         </div>
       </section>
 
-      {/* ✅ Asistente (Guía de uso): ahora sí "lee" esta pantalla */}
-      <AssistantDock
-        visibleState={assistantVisibleState}
-        uiHints={[
-          "📘 Estás en la guía: puedes preguntar por cualquier punto (1–13).",
-          "📄 PDF general: se genera en /analisis con el botón verde “PDF general”.",
-          "🧾 PDF mineral: abre “Ficha” en un mineral y luego “PDF Mineral”.",
-          "➡️ Si quieres ir directo al flujo: Inicio → “Comenzar análisis”.",
-        ]}
-        compact
-      />
-    </main>
+          </main>
   );
 }

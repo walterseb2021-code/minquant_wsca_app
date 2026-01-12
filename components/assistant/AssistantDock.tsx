@@ -1,3 +1,4 @@
+// components/assistant/AssistantDock.tsx
 "use client";
 
 import React from "react";
@@ -147,7 +148,7 @@ export default function AssistantDock({
   // =======================
   // ✅ DRAG (Pointer events) PC + móvil
   // =======================
-  const [pos, setPos] = React.useState<DockPos>(() => getDefaultPos());
+  const [pos, setPos] = React.useState<DockPos>({ x: 16, y: 16 });
   const dragRef = React.useRef<{
     active: boolean;
     pointerId: number | null;
@@ -228,6 +229,9 @@ export default function AssistantDock({
     dragRef.current.pointerId = null;
     dragRef.current.dx = 0;
     dragRef.current.dy = 0;
+
+    // ✅ importante: limpiar "moved" para que el próximo tap funcione bien
+    dragRef.current.moved = false;
 
     document.body.style.userSelect = "";
 
@@ -459,30 +463,44 @@ export default function AssistantDock({
 
   // ==================================================
   // ✅ MODO MINI (BURBUJA) draggable + tap abre
+  //   FIX: el wrapper ahora tiene width/height para que el clamping y el “hitbox” sean consistentes en móvil
   // ==================================================
   if (mini) {
     return (
       <div
         ref={dockRef}
         className="fixed z-[9999] select-none"
-        style={containerStyle}
+        style={{
+          ...containerStyle,
+          width: bubbleSize,
+          height: bubbleSize,
+        }}
       >
         <button
-          type="button"
-          className={[
-            "w-[72px] h-[72px] rounded-full shadow-xl border bg-white",
-            "flex items-center justify-center",
-            enabled ? "" : "opacity-70",
-          ].join(" ")}
-          title="Toca para abrir. Arrastra para mover."
-          onPointerDown={onPointerDownDrag}
-          onPointerMove={onPointerMoveDrag}
-          onPointerUp={(e) => onPointerUpDrag(e, { miniTapToOpen: true })}
-        >
-          <div className="pointer-events-none">
-            <LightAvatar size={56} paused={!enabled} energy={enabled ? (busy ? 0.95 : 0.65) : 0} />
-          </div>
-        </button>
+  type="button"
+  className={[
+    "relative w-[72px] h-[72px] rounded-full shadow-xl border",
+    "flex items-center justify-center overflow-hidden",
+    // ✅ color base (ya no blanco)
+    enabled ? "bg-gradient-to-br from-emerald-600 to-cyan-600" : "bg-slate-200 opacity-80",
+  ].join(" ")}
+  title="Toca para abrir. Arrastra para mover."
+  onPointerDown={onPointerDownDrag}
+  onPointerMove={onPointerMoveDrag}
+  onPointerUp={(e) => onPointerUpDrag(e, { miniTapToOpen: true })}
+  onPointerCancel={(e) => onPointerUpDrag(e)}
+>
+  {/* ✅ aro dinámico (ligero) */}
+  <div className="absolute inset-0 rounded-full border-4 border-white/30 border-t-white/90 animate-spin" />
+
+  {/* ✅ brillo suave */}
+  <div className="absolute inset-0 rounded-full bg-white/10 animate-pulse" />
+
+  {/* avatar encima */}
+  <div className="relative pointer-events-none">
+    <LightAvatar size={56} paused={!enabled} energy={enabled ? (busy ? 0.95 : 0.65) : 0} />
+  </div>
+</button>
 
         {/* mini-controls (esquinita) */}
         <div className="absolute -top-2 -right-2 flex gap-1">
@@ -515,11 +533,7 @@ export default function AssistantDock({
   // ✅ PANEL NORMAL (Header draggable)
   // ==================================================
   return (
-    <div
-      ref={dockRef}
-      className="fixed z-[9999]"
-      style={containerStyle}
-    >
+    <div ref={dockRef} className="fixed z-[9999]" style={containerStyle}>
       {/* Toggle bar */}
       <div className="flex items-center justify-end gap-2 mb-2">
         <button
@@ -583,10 +597,11 @@ export default function AssistantDock({
           <div
             className="flex items-center gap-3 px-3 py-3 border-b bg-gradient-to-r from-cyan-600 to-emerald-600 text-white select-none"
             title="Arrastra desde aquí para mover el asistente"
-            style={{ cursor: "grab" }}
+            style={{ cursor: "grab", touchAction: "none" }}
             onPointerDown={onPointerDownDrag}
             onPointerMove={onPointerMoveDrag}
             onPointerUp={(e) => onPointerUpDrag(e)}
+            onPointerCancel={(e) => onPointerUpDrag(e)}
           >
             <div className="shrink-0 pointer-events-none">
               <LightAvatar size={56} paused={!enabled} energy={enabled ? (busy ? 0.95 : 0.65) : 0} />
@@ -595,9 +610,7 @@ export default function AssistantDock({
             <div className="min-w-0 pointer-events-none">
               <div className="text-sm font-semibold leading-tight">Asistente MinQuant_WSCA</div>
 
-              <div className="text-[11px] opacity-90 truncate">
-                {pathname ? `Página: ${pathname}` : "Página: (sin ruta)"}
-              </div>
+              <div className="text-[11px] opacity-90 truncate">{pathname ? `Página: ${pathname}` : "Página: (sin ruta)"}</div>
 
               <div className="text-[11px] opacity-95">
                 Modo: <b>{modeLabel}</b>{" "}
@@ -720,12 +733,7 @@ export default function AssistantDock({
               </div>
 
               <label className="flex items-center gap-2 text-xs text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={ttsOn}
-                  disabled={!canUseTts}
-                  onChange={(e) => setTtsOn(e.target.checked)}
-                />
+                <input type="checkbox" checked={ttsOn} disabled={!canUseTts} onChange={(e) => setTtsOn(e.target.checked)} />
                 Responder con voz
               </label>
             </div>
@@ -809,10 +817,12 @@ export default function AssistantDock({
           onPointerDown={onPointerDownDrag}
           onPointerMove={onPointerMoveDrag}
           onPointerUp={(e) => {
+            // Capturamos si movió ANTES de limpiar
+            const moved = dragRef.current.moved;
             onPointerUpDrag(e);
-            // tap abre (si no movió)
-            if (!dragRef.current.moved) setOpen(true);
+            if (!moved) setOpen(true);
           }}
+          onPointerCancel={(e) => onPointerUpDrag(e)}
         >
           Abrir asistente
         </button>
