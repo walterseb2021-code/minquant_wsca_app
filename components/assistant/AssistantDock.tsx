@@ -36,6 +36,36 @@ function safeTrim(s: string) {
   return String(s || "").replace(/\s+/g, " ").trim();
 }
 
+// ✅ Limpieza SOLO para TTS (no altera el texto del chat)
+function stripForTts(input: string) {
+  let s = String(input || "");
+
+  // Quita markdown común: **negrita**, *cursiva*, ____, `code`
+  s = s.replace(/\*\*(.*?)\*\*/g, "$1");
+  s = s.replace(/\*(.*?)\*/g, "$1");
+  s = s.replace(/__(.*?)__/g, "$1");
+  s = s.replace(/`([^`]+)`/g, "$1");
+
+  // Quita headings y blockquotes
+  s = s.replace(/^\s{0,3}#{1,6}\s+/gm, "");
+  s = s.replace(/^\s{0,3}>\s+/gm, "");
+
+  // Quita bullets tipo "- ", "* ", "• "
+  s = s.replace(/^\s*[-*•]\s+/gm, "");
+
+  // Links markdown [texto](url) -> texto
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, "$1");
+
+  // Quita caracteres sueltos molestos para TTS (asteriscos, pipes, guiones repetidos)
+  s = s.replace(/[*|]/g, " ");
+  s = s.replace(/-{2,}/g, " ");
+
+  // Compacta espacios
+  s = s.replace(/\s+/g, " ").trim();
+
+  return s;
+}
+
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
@@ -417,8 +447,9 @@ export default function AssistantDock({
       const reply = safeTrim(data.reply);
       setMessages((prev) => prev.concat({ role: "assistant", content: reply }));
 
+      // ✅ TTS sin leer asteriscos/markdown
       if (ttsOn && voice.state.ttsSupported) {
-        voice.speak(reply);
+        voice.speak(stripForTts(reply));
       }
     } catch (e: any) {
       setMessages((prev) =>
@@ -477,30 +508,29 @@ export default function AssistantDock({
         }}
       >
         <button
-  type="button"
-  className={[
-    "relative w-[72px] h-[72px] rounded-full shadow-xl border",
-    "flex items-center justify-center overflow-hidden",
-    // ✅ color base (ya no blanco)
-    enabled ? "bg-gradient-to-br from-emerald-600 to-cyan-600" : "bg-slate-200 opacity-80",
-  ].join(" ")}
-  title="Toca para abrir. Arrastra para mover."
-  onPointerDown={onPointerDownDrag}
-  onPointerMove={onPointerMoveDrag}
-  onPointerUp={(e) => onPointerUpDrag(e, { miniTapToOpen: true })}
-  onPointerCancel={(e) => onPointerUpDrag(e)}
->
-  {/* ✅ aro dinámico (ligero) */}
-  <div className="absolute inset-0 rounded-full border-4 border-white/30 border-t-white/90 animate-spin" />
+          type="button"
+          className={[
+            "relative w-[72px] h-[72px] rounded-full shadow-xl border",
+            "flex items-center justify-center overflow-hidden",
+            enabled ? "bg-gradient-to-br from-emerald-600 to-cyan-600" : "bg-slate-200 opacity-80",
+          ].join(" ")}
+          title="Toca para abrir. Arrastra para mover."
+          onPointerDown={onPointerDownDrag}
+          onPointerMove={onPointerMoveDrag}
+          onPointerUp={(e) => onPointerUpDrag(e, { miniTapToOpen: true })}
+          onPointerCancel={(e) => onPointerUpDrag(e)}
+        >
+          {/* ✅ aro dinámico (ligero) */}
+          <div className="absolute inset-0 rounded-full border-4 border-white/30 border-t-white/90 animate-spin" />
 
-  {/* ✅ brillo suave */}
-  <div className="absolute inset-0 rounded-full bg-white/10 animate-pulse" />
+          {/* ✅ brillo suave */}
+          <div className="absolute inset-0 rounded-full bg-white/10 animate-pulse" />
 
-  {/* avatar encima */}
-  <div className="relative pointer-events-none">
-    <LightAvatar size={56} paused={!enabled} energy={enabled ? (busy ? 0.95 : 0.65) : 0} />
-  </div>
-</button>
+          {/* avatar encima */}
+          <div className="relative pointer-events-none">
+            <LightAvatar size={56} paused={!enabled} energy={enabled ? (busy ? 0.95 : 0.65) : 0} />
+          </div>
+        </button>
 
         {/* mini-controls (esquinita) */}
         <div className="absolute -top-2 -right-2 flex gap-1">
